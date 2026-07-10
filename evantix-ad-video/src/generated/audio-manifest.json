@@ -1,102 +1,102 @@
 {
   "1": {
     "file": "assets/voiceover/scene-01.mp3",
-    "durationSeconds": 4.58,
-    "source": "estimated"
+    "durationSeconds": 5.3,
+    "source": "measured"
   },
   "2": {
     "file": "assets/voiceover/scene-02.mp3",
-    "durationSeconds": 5.73,
-    "source": "estimated"
+    "durationSeconds": 5.81,
+    "source": "measured"
   },
   "3": {
     "file": "assets/voiceover/scene-03.mp3",
-    "durationSeconds": 5.73,
-    "source": "estimated"
+    "durationSeconds": 7.46,
+    "source": "measured"
   },
   "4": {
     "file": "assets/voiceover/scene-04.mp3",
-    "durationSeconds": 4.58,
-    "source": "estimated"
+    "durationSeconds": 6.41,
+    "source": "measured"
   },
   "5": {
     "file": "assets/voiceover/scene-05.mp3",
-    "durationSeconds": 6.12,
-    "source": "estimated"
+    "durationSeconds": 7.1,
+    "source": "measured"
   },
   "6": {
     "file": "assets/voiceover/scene-06.mp3",
-    "durationSeconds": 5.73,
-    "source": "estimated"
+    "durationSeconds": 6.05,
+    "source": "measured"
   },
   "7": {
     "file": "assets/voiceover/scene-07.mp3",
-    "durationSeconds": 5.35,
-    "source": "estimated"
+    "durationSeconds": 7.25,
+    "source": "measured"
   },
   "8": {
     "file": "assets/voiceover/scene-08.mp3",
-    "durationSeconds": 5.73,
-    "source": "estimated"
+    "durationSeconds": 6.6,
+    "source": "measured"
   },
   "9": {
     "file": "assets/voiceover/scene-09.mp3",
-    "durationSeconds": 5.73,
-    "source": "estimated"
+    "durationSeconds": 5.66,
+    "source": "measured"
   },
   "10": {
     "file": "assets/voiceover/scene-10.mp3",
-    "durationSeconds": 4.97,
-    "source": "estimated"
+    "durationSeconds": 5.21,
+    "source": "measured"
   },
   "11": {
     "file": "assets/voiceover/scene-11.mp3",
-    "durationSeconds": 5.73,
-    "source": "estimated"
+    "durationSeconds": 6.17,
+    "source": "measured"
   },
   "12": {
     "file": "assets/voiceover/scene-12.mp3",
-    "durationSeconds": 4.58,
-    "source": "estimated"
+    "durationSeconds": 4.46,
+    "source": "measured"
   },
   "13": {
     "file": "assets/voiceover/scene-13.mp3",
-    "durationSeconds": 5.35,
-    "source": "estimated"
+    "durationSeconds": 7.25,
+    "source": "measured"
   },
   "14": {
     "file": "assets/voiceover/scene-14.mp3",
-    "durationSeconds": 5.35,
-    "source": "estimated"
+    "durationSeconds": 4.75,
+    "source": "measured"
   },
   "15": {
     "file": "assets/voiceover/scene-15.mp3",
-    "durationSeconds": 3.81,
-    "source": "estimated"
+    "durationSeconds": 4.7,
+    "source": "measured"
   },
   "16": {
     "file": "assets/voiceover/scene-16.mp3",
-    "durationSeconds": 7.66,
-    "source": "estimated"
+    "durationSeconds": 7.61,
+    "source": "measured"
   },
   "17": {
     "file": "assets/voiceover/scene-17.mp3",
-    "durationSeconds": 4.58,
-    "source": "estimated"
+    "durationSeconds": 6.17,
+    "source": "measured"
   },
   "18": {
     "file": "assets/voiceover/scene-18.mp3",
-    "durationSeconds": 5.73,
-    "source": "estimated"
+    "durationSeconds": 6.46,
+    "source": "measured"
   },
   "19": {
     "file": "assets/voiceover/scene-19.mp3",
-    "durationSeconds": 4.58,
-    "source": "estimated"
+    "durationSeconds": 5.66,
+    "source": "measured"
   },
   "20": {
     "file": "assets/voiceover/scene-20.mp3",
-    "durationSeconds": 6.5,
-    "source": "estimated"
+    "durationSeconds": 8.06,
+    "source": "measured"
   }
 }
