@@ -1,0 +1,26 @@
+{
+  "fps": 30,
+  "transitionSeconds": 0.4,
+  "scenes": [
+    { "id": "01-intro", "title": "Evantix introduction", "seconds": 3.0, "transition": "fade" },
+    { "id": "02-problem", "title": "The operational problem", "seconds": 3.5, "transition": "slide-left" },
+    { "id": "03-leads-lost", "title": "Leads being lost", "seconds": 3.0, "transition": "slide-left" },
+    { "id": "04-recruitment-bottleneck", "title": "Recruitment bottleneck", "seconds": 3.5, "transition": "wipe" },
+    { "id": "05-connects-everything", "title": "Evantix connects everything", "seconds": 3.5, "transition": "zoom" },
+    { "id": "06-application", "title": "New application submitted", "seconds": 3.0, "transition": "slide-up" },
+    { "id": "07-profile", "title": "Instant candidate profile", "seconds": 3.5, "transition": "zoom" },
+    { "id": "08-scoring", "title": "Automatic candidate scoring", "seconds": 3.5, "transition": "slide-left" },
+    { "id": "09-response", "title": "Automated first response", "seconds": 3.0, "transition": "slide-up" },
+    { "id": "10-booking", "title": "Self-service interview booking", "seconds": 3.5, "transition": "slide-left" },
+    { "id": "11-pipeline", "title": "Opportunity pipeline", "seconds": 3.5, "transition": "wipe" },
+    { "id": "12-workflow", "title": "Automated follow-up journey", "seconds": 3.5, "transition": "zoom" },
+    { "id": "13-compliance", "title": "Compliance and document tracking", "seconds": 3.5, "transition": "slide-left" },
+    { "id": "14-tasks", "title": "Team task automation", "seconds": 3.0, "transition": "slide-up" },
+    { "id": "15-clients", "title": "Client and vacancy management", "seconds": 3.5, "transition": "wipe" },
+    { "id": "16-matching", "title": "Candidate matching", "seconds": 3.5, "transition": "zoom" },
+    { "id": "17-dashboard", "title": "Live performance dashboard", "seconds": 3.5, "transition": "slide-left" },
+    { "id": "18-transformation", "title": "Business transformation", "seconds": 3.5, "transition": "wipe" },
+    { "id": "19-journey", "title": "The complete Evantix journey", "seconds": 3.5, "transition": "zoom" },
+    { "id": "20-cta", "title": "Final call to action", "seconds": 4.5, "transition": "fade" }
+  ]
+}
