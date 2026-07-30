@@ -1,0 +1,279 @@
+// Convella Sponsor Intelligence — Prisma schema
+// All seed/demo data derived from this schema is fictional (see prisma/seed.ts).
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ---------------------------------------------------------------------------
+// Enums
+// ---------------------------------------------------------------------------
+
+enum PlacementType {
+  DEDICATED_VIDEO
+  SPONSORED_INTEGRATION
+  PRODUCT_PLACEMENT
+  AFFILIATE_PROMOTION
+  FREE_PRODUCT_OR_GIFTED
+  ORGANIC_MENTION
+  CHANNEL_PARTNERSHIP
+  UNKNOWN
+}
+
+enum ReviewStatus {
+  PENDING
+  CONFIRMED
+  REJECTED
+  EDITED
+  ORGANIC
+}
+
+enum TranscriptStatus {
+  NOT_REQUESTED
+  PENDING
+  AVAILABLE
+  UNAVAILABLE
+  FAILED
+  MANUAL_UPLOAD_REQUIRED
+}
+
+enum AnalysisStatus {
+  NOT_STARTED
+  QUEUED
+  PROCESSING
+  SPONSOR_FOUND
+  NO_SPONSOR_FOUND
+  FAILED
+  PARTIAL
+}
+
+enum AnalysisMode {
+  FIRST_SPONSOR_ONLY
+  ALL_SPONSORS
+}
+
+enum EvidenceSource {
+  VIDEO_AUDIO
+  VIDEO_VISUAL
+  TRANSCRIPT
+  DESCRIPTION
+  YOUTUBE_METADATA
+  MANUAL
+}
+
+enum JobStatus {
+  QUEUED
+  PROCESSING
+  COMPLETED
+  FAILED
+  CANCELLED
+}
+
+enum JobType {
+  CHANNEL_SCAN
+  VIDEO_ANALYSIS
+}
+
+// ---------------------------------------------------------------------------
+// Models
+// ---------------------------------------------------------------------------
+
+model Channel {
+  id               String    @id @default(cuid())
+  youtubeChannelId String    @unique
+  handle           String?
+  name             String
+  description      String    @default("")
+  thumbnailUrl     String?
+  subscriberCount  BigInt?
+  totalVideoCount  Int?
+  category         String?
+  notes            String?
+  lastScannedAt    DateTime?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  videos               Video[]
+  analysisJobs         AnalysisJob[]
+  creatorOpportunities CreatorOpportunity[]
+
+  @@index([handle])
+}
+
+model Video {
+  id                   String    @id @default(cuid())
+  youtubeVideoId       String    @unique
+  channelId            String
+  channel              Channel   @relation(fields: [channelId], references: [id], onDelete: Cascade)
+  title                String
+  description          String    @default("")
+  thumbnailUrl         String?
+  publishedAt          DateTime?
+  durationSeconds      Int?
+  viewCount            BigInt?
+  likeCount            BigInt?
+  tags                 String[]  @default([])
+  paidProductPlacement Boolean   @default(false)
+
+  transcriptStatus TranscriptStatus @default(NOT_REQUESTED)
+  transcriptSource String?
+  transcriptText   String?
+
+  analysisStatus  AnalysisStatus @default(NOT_STARTED)
+  analysisMode    AnalysisMode   @default(FIRST_SPONSOR_ONLY)
+  secondsAnalysed Int            @default(0)
+  chunksProcessed Int            @default(0)
+  stopReason      String?
+  analysedAt      DateTime?
+
+  mediaAuthorised Boolean @default(false)
+  notes           String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  transcriptSegments    TranscriptSegment[]
+  sponsorshipDetections SponsorshipDetection[]
+  analysisJobs          AnalysisJob[]
+
+  @@index([channelId])
+  @@index([analysisStatus])
+}
+
+model TranscriptSegment {
+  id              String   @id @default(cuid())
+  videoId         String
+  video           Video    @relation(fields: [videoId], references: [id], onDelete: Cascade)
+  startSeconds    Float?
+  durationSeconds Float?
+  text            String
+  source          String
+  createdAt       DateTime @default(now())
+
+  @@index([videoId])
+}
+
+model Brand {
+  id            String   @id @default(cuid())
+  canonicalName String   @unique
+  displayName   String
+  domain        String?
+  category      String?
+  aliases       String[] @default([])
+  notes         String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  sponsorshipDetections SponsorshipDetection[]
+  competitorSuggestions BrandCompetitorSuggestion[]
+  creatorOpportunities  CreatorOpportunity[]
+
+  @@index([domain])
+}
+
+model SponsorshipDetection {
+  id                    String         @id @default(cuid())
+  videoId               String
+  video                 Video          @relation(fields: [videoId], references: [id], onDelete: Cascade)
+  brandId               String?
+  brand                 Brand?         @relation(fields: [brandId], references: [id])
+  rawBrandName          String
+  placementType         PlacementType  @default(UNKNOWN)
+  startTimestampSeconds Int?
+  endTimestampSeconds   Int?
+  evidenceText          String
+  evidenceSource        EvidenceSource
+  confidenceScore       Float
+  reasoningSummary      String
+  promotionalUrl        String?
+  discountCode          String?
+  callToAction          String?
+  sponsorshipConfirmed  Boolean        @default(false)
+  reviewStatus          ReviewStatus   @default(PENDING)
+  reviewedAt            DateTime?
+  createdAt             DateTime       @default(now())
+  updatedAt             DateTime       @updatedAt
+
+  evidence SponsorEvidence[]
+
+  @@index([videoId])
+  @@index([brandId])
+  @@index([reviewStatus])
+}
+
+model SponsorEvidence {
+  id                     String               @id @default(cuid())
+  sponsorshipDetectionId String
+  detection              SponsorshipDetection @relation(fields: [sponsorshipDetectionId], references: [id], onDelete: Cascade)
+  source                 EvidenceSource
+  timestampSeconds       Int?
+  text                   String
+  strength               Float
+  metadata               Json?
+  createdAt              DateTime             @default(now())
+
+  @@index([sponsorshipDetectionId])
+}
+
+model AnalysisJob {
+  id                String       @id @default(cuid())
+  channelId         String?
+  channel           Channel?     @relation(fields: [channelId], references: [id], onDelete: Cascade)
+  videoId           String?
+  video             Video?       @relation(fields: [videoId], references: [id], onDelete: Cascade)
+  jobType           JobType
+  status            JobStatus    @default(QUEUED)
+  analysisMode      AnalysisMode @default(FIRST_SPONSOR_ONLY)
+  currentChunkStart Int?
+  currentChunkEnd   Int?
+  progress          Float        @default(0)
+  secondsAnalysed   Int          @default(0)
+  chunksProcessed   Int          @default(0)
+  estimatedCost     Float        @default(0)
+  modelUsage        Json?
+  errorMessage      String?
+  attempts          Int          @default(0)
+  startedAt         DateTime?
+  completedAt       DateTime?
+  createdAt         DateTime     @default(now())
+  updatedAt         DateTime     @updatedAt
+
+  @@index([status])
+  @@index([channelId])
+  @@index([videoId])
+}
+
+model BrandCompetitorSuggestion {
+  id                 String   @id @default(cuid())
+  brandId            String
+  brand              Brand    @relation(fields: [brandId], references: [id], onDelete: Cascade)
+  suggestedBrandName String
+  suggestedDomain    String?
+  reason             String
+  confidenceScore    Float
+  createdAt          DateTime @default(now())
+
+  @@index([brandId])
+}
+
+model CreatorOpportunity {
+  id               String   @id @default(cuid())
+  brandId          String
+  brand            Brand    @relation(fields: [brandId], references: [id], onDelete: Cascade)
+  channelId        String
+  channel          Channel  @relation(fields: [channelId], references: [id], onDelete: Cascade)
+  opportunityScore Int
+  reason           String
+  conflictWarning  String?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@index([brandId])
+  @@index([channelId])
+  @@unique([brandId, channelId])
+}
