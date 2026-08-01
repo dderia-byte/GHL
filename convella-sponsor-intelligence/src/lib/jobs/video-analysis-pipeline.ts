@@ -4,7 +4,8 @@ import { analyseDescription } from "@/lib/signals/description";
 import { analyseYouTubeMetadata } from "@/lib/signals/metadata";
 import { ensureTranscriptForAnalysis } from "@/lib/transcript/service";
 import { getVideoAnalysisProvider } from "@/lib/video-analysis";
-import type { SponsorEvidenceInput } from "@/lib/video-analysis/types";
+import type { SponsorEvidenceInput, SponsorRecognitionResult } from "@/lib/video-analysis/types";
+import type { DescriptionSignals } from "@/lib/signals/description";
 import { evaluateSponsorshipDecision } from "@/lib/decision/engine";
 import { classifySponsorship } from "@/lib/anthropic/reasoning-service";
 import { findOrCreateBrand } from "@/lib/brand/service";
@@ -20,6 +21,45 @@ export interface RunVideoAnalysisOptions {
   resumeFromSeconds?: number;
   /** Overrides the video's stored analysis mode for this run only. */
   forceMode?: AnalysisMode;
+}
+
+/**
+ * Deterministic safety net for the very first chunk of a video: if the description
+ * itself contains an explicit sponsorship-disclosure phrase (extracted before any AI
+ * call, in `analyseDescription`) naming a candidate brand, but the AI video-analysis
+ * provider declined to recognise it from chunk audio/visuals alone, surface that
+ * description text as `DESCRIPTION`-sourced evidence so the decision engine can still
+ * score it. This never fabricates evidence — the text comes straight from the video's
+ * real description — and it deliberately does not set a confidence high enough to
+ * satisfy the strict auto-stop threshold on its own; it only ensures a reviewable
+ * candidate detection is created instead of the video being marked "no sponsor found"
+ * purely because the AI provider was overly conservative about chunk-window scoping.
+ */
+function descriptionOnlyFallback(descriptionSignals: DescriptionSignals): SponsorRecognitionResult | null {
+  const brandName = descriptionSignals.candidateBrands[0];
+  if (!descriptionSignals.hasExplicitSponsorDisclosure || !brandName) return null;
+
+  const disclosure = descriptionSignals.disclosureMatches[0];
+  return {
+    recognised: true,
+    brandName,
+    brandDomain: null,
+    placementType: "UNKNOWN",
+    sponsorshipConfirmed: false,
+    confidenceScore: 0.5,
+    startTimestampSeconds: null,
+    endTimestampSeconds: null,
+    evidence: [
+      {
+        source: "DESCRIPTION",
+        timestampSeconds: null,
+        text: disclosure?.context ?? `Description states the video is sponsored by ${brandName}.`,
+        strength: 0.75,
+        metadata: { origin: "deterministic-description-fallback" },
+      },
+    ],
+    reason: `Deterministic description scan found an explicit sponsorship disclosure naming ${brandName}; the AI video-analysis provider did not independently confirm this from chunk audio/visuals.`,
+  };
 }
 
 async function syncDetectionEvidence(detectionId: string, evidence: SponsorEvidenceInput[]) {
@@ -96,7 +136,7 @@ export async function runVideoAnalysis(jobId: string, videoId: string, options: 
       (s) => s.startSeconds !== null && s.startSeconds >= cursor - 15 && s.startSeconds <= end + 15,
     );
 
-    const chunkResult = await provider.analyseChunk(
+    let chunkResult = await provider.analyseChunk(
       { videoId: video.youtubeVideoId, startSeconds: cursor, endSeconds: end, mediaReference: "" },
       {
         title: video.title,
@@ -106,6 +146,11 @@ export async function runVideoAnalysis(jobId: string, videoId: string, options: 
         candidateBrands: descriptionSignals.candidateBrands,
       },
     );
+
+    if (!chunkResult.brandName && chunksProcessed === 0) {
+      const fallback = descriptionOnlyFallback(descriptionSignals);
+      if (fallback) chunkResult = fallback;
+    }
 
     observations.push(...chunkResult.evidence);
     chunksProcessed += 1;
