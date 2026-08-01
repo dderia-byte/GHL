@@ -31,17 +31,29 @@ export async function enqueueVideoAnalysisJob(videoId: string, analysisMode: Ana
   });
 }
 
-/** Claims the oldest queued job for processing. Not safe for multiple concurrent workers without a real queue. */
+/**
+ * Claims the oldest queued job for processing. Uses `SELECT ... FOR UPDATE SKIP LOCKED`
+ * so multiple `npm run worker` processes can run concurrently against the same
+ * database without ever claiming the same job twice: a worker whose transaction is
+ * already holding a row's lock makes that row invisible to every other worker's
+ * concurrent claim query, rather than making them block and wait for it.
+ */
 export async function claimNextQueuedJob() {
-  const job = await prisma.analysisJob.findFirst({
-    where: { status: "QUEUED", jobType: "VIDEO_ANALYSIS" },
-    orderBy: { createdAt: "asc" },
-  });
-  if (!job) return null;
+  return prisma.$transaction(async (tx) => {
+    const rows = await tx.$queryRaw<{ id: string; startedAt: Date | null }[]>`
+      SELECT id, "startedAt" FROM "AnalysisJob"
+      WHERE status = 'QUEUED' AND "jobType" = 'VIDEO_ANALYSIS'
+      ORDER BY "createdAt" ASC
+      LIMIT 1
+      FOR UPDATE SKIP LOCKED
+    `;
+    const job = rows[0];
+    if (!job) return null;
 
-  return prisma.analysisJob.update({
-    where: { id: job.id },
-    data: { status: "PROCESSING", startedAt: job.startedAt ?? new Date(), attempts: { increment: 1 } },
+    return tx.analysisJob.update({
+      where: { id: job.id },
+      data: { status: "PROCESSING", startedAt: job.startedAt ?? new Date(), attempts: { increment: 1 } },
+    });
   });
 }
 
