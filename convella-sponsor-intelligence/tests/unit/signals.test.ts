@@ -10,6 +10,18 @@ describe("analyseDescription", () => {
     expect(result.hasExplicitSponsorDisclosure).toBe(true);
   });
 
+  it("stops brand capture at a sentence boundary", () => {
+    // A capitalised word starting the NEXT sentence must not be absorbed into the brand.
+    const result = analyseDescription("This video is sponsored by Nimbus Notes. Try Nimbus Notes free today.");
+    expect(result.candidateBrands).toContain("Nimbus Notes");
+    expect(result.candidateBrands).not.toContain("Nimbus Notes. Try");
+  });
+
+  it("still strips a plain trailing period from a brand at end of text", () => {
+    const result = analyseDescription("This video is sponsored by Higgsfield.");
+    expect(result.candidateBrands).toContain("Higgsfield");
+  });
+
   it("extracts URLs and domains", () => {
     const result = analyseDescription("Try CodeRabbit free: https://coderabbit.ai/try and read the docs at docs.coderabbit.ai");
     expect(result.urls).toContain("https://coderabbit.ai/try");

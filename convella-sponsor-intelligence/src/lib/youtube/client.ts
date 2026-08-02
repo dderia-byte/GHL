@@ -137,6 +137,36 @@ export class YouTubeClient {
     return channel;
   }
 
+  /** Batched channels.list lookup (up to 50 IDs per request = 1 quota unit per batch). */
+  async getChannelsByIds(channelIds: string[]): Promise<YouTubeChannelResource[]> {
+    const results = new Map<string, YouTubeChannelResource>();
+    const uncached: string[] = [];
+
+    for (const id of channelIds) {
+      const cached = channelCache.get(id);
+      if (cached) results.set(id, cached);
+      else uncached.push(id);
+    }
+
+    for (let i = 0; i < uncached.length; i += BATCH_SIZE) {
+      const batch = uncached.slice(i, i + BATCH_SIZE);
+      if (batch.length === 0) continue;
+
+      const data = (await requestWithRetry("channels", { part: CHANNEL_PARTS, id: batch.join(",") })) as {
+        items?: Array<Record<string, unknown>>;
+      };
+
+      for (const item of data.items ?? []) {
+        const channel = mapChannelResource(item);
+        channelCache.set(channel.id, channel);
+        results.set(channel.id, channel);
+      }
+    }
+
+    // Deleted/terminated channels simply don't come back — callers treat absence as UNAVAILABLE.
+    return channelIds.map((id) => results.get(id)).filter((c): c is YouTubeChannelResource => Boolean(c));
+  }
+
   async getChannelByHandle(handle: string): Promise<YouTubeChannelResource> {
     const cacheKey = `handle:${handle}`;
     const cached = channelCache.get(cacheKey);

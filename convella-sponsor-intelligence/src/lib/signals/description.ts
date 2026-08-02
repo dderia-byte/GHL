@@ -55,7 +55,13 @@ function extractCandidateBrands(description: string): string[] {
       // reasonable proper-noun heuristic that avoids over-matching generic prose.
       const match = after.match(/^[\s,:]*([A-Z][\w&.'-]*(?:\s+(?:of|the|and)?\s*[A-Z][\w&.'-]*){0,2})/);
       if (match) {
-        const brand = match[1].replace(/[.,!?'"]+$/, "").trim();
+        let brand = match[1];
+        // A period followed by whitespace is a sentence boundary, not part of the
+        // brand — "sponsored by Nimbus. Try it free" must yield "Nimbus", never
+        // "Nimbus. Try". (A trailing period with no following text is stripped below.)
+        const sentenceEnd = brand.search(/\.\s/);
+        if (sentenceEnd !== -1) brand = brand.slice(0, sentenceEnd);
+        brand = brand.replace(/[.,!?'"]+$/, "").trim();
         if (brand.length > 1 && brand.length < 60) candidates.add(brand);
       }
       searchFrom = idx + phrase.length;
