@@ -50,6 +50,10 @@ enum AnalysisStatus {
   NO_SPONSOR_FOUND
   FAILED
   PARTIAL
+  /// No stage of the three-stage pipeline reached the confirmation threshold (or a
+  /// cost limit was hit first) — best-candidate evidence is saved, awaiting a human
+  /// decision rather than being silently dropped or falsely auto-confirmed.
+  HUMAN_REVIEW_REQUIRED
 }
 
 enum AnalysisMode {
@@ -137,6 +141,17 @@ model Video {
   /// analysed" panel. Null until the video has been analysed at least once.
   lastAnalysisInputs Json?
 
+  /// Which stage of the three-stage cost-optimised pipeline resolved the sponsor
+  /// (1 = free deterministic, 2 = cheap transcript, 3 = native video), or null if
+  /// unresolved / never analysed under the staged pipeline.
+  resolvedAtStage Int?
+  /// Content hashes + pipeline version this video's stage results were computed
+  /// against — a later analysis reuses a stage's cached result instead of re-running
+  /// it when the relevant hash and pipelineVersion still match.
+  descriptionHash String?
+  transcriptHash  String?
+  pipelineVersion Int?
+
   mediaAuthorised Boolean @default(false)
   notes           String?
 
@@ -146,6 +161,7 @@ model Video {
   transcriptSegments    TranscriptSegment[]
   sponsorshipDetections SponsorshipDetection[]
   analysisJobs          AnalysisJob[]
+  analysisUsages        AnalysisUsage[]
 
   @@index([channelId])
   @@index([analysisStatus])
@@ -252,6 +268,47 @@ model AnalysisJob {
   @@index([status])
   @@index([channelId])
   @@index([videoId])
+}
+
+/// Cost/usage record for one run of the three-stage sponsor-analysis pipeline against
+/// one video. Populated regardless of which stage resolved (or failed to resolve) the
+/// sponsor, so cost can be audited and reported even for HUMAN_REVIEW_REQUIRED cases.
+model AnalysisUsage {
+  id            String @id @default(cuid())
+  videoId       String
+  video         Video  @relation(fields: [videoId], references: [id], onDelete: Cascade)
+  analysisJobId String?
+
+  resolvedAtStage Int?
+
+  textModelCalls             Int @default(0)
+  reasoningModelCalls        Int @default(0)
+  videoModelCalls            Int @default(0)
+  inputTokens                Int @default(0)
+  outputTokens               Int @default(0)
+  transcriptCharactersSent   Int @default(0)
+  nativeVideoSecondsAnalysed Int @default(0)
+
+  estimatedTextCost      Decimal @default(0) @db.Decimal(10, 6)
+  estimatedReasoningCost Decimal @default(0) @db.Decimal(10, 6)
+  estimatedVideoCost     Decimal @default(0) @db.Decimal(10, 6)
+  totalEstimatedCost     Decimal @default(0) @db.Decimal(10, 6)
+
+  costLimitReached       Boolean @default(false)
+  skippedExpensiveReason String?
+
+  nativeVideoUsed    Boolean @default(false)
+  nativeAudioUsed    Boolean @default(false)
+  visualAnalysisUsed Boolean @default(false)
+
+  promptCacheReadTokens  Int @default(0)
+  promptCacheWriteTokens Int @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([videoId])
+  @@index([analysisJobId])
 }
 
 model BrandCompetitorSuggestion {

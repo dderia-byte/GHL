@@ -28,6 +28,7 @@ const ANALYSIS_STATUS_TONE: Record<string, BadgeTone> = {
   NO_SPONSOR_FOUND: "neutral",
   FAILED: "danger",
   PARTIAL: "warning",
+  HUMAN_REVIEW_REQUIRED: "warning",
 };
 
 export function AnalysisStatusBadge({ status }: { status: string }) {

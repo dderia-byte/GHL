@@ -10,6 +10,7 @@ export async function getVideoDetails(videoId: string) {
         orderBy: { createdAt: "asc" },
       },
       analysisJobs: { orderBy: { createdAt: "desc" }, take: 1 },
+      analysisUsages: { orderBy: { createdAt: "desc" }, take: 1 },
     },
   });
   return video;

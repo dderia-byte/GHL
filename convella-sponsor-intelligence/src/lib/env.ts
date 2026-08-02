@@ -16,6 +16,25 @@ const envSchema = z.object({
   DEFAULT_ANALYSIS_MODE: z.enum(["FIRST_SPONSOR_ONLY", "ALL_SPONSORS"]).optional().default("FIRST_SPONSOR_ONLY"),
   DEFAULT_CHUNK_SECONDS: z.coerce.number().int().positive().optional().default(60),
   MAX_UPLOAD_SIZE_MB: z.coerce.number().int().positive().optional().default(250),
+
+  // Three-stage cost-optimised sponsor-analysis pipeline (src/lib/sponsor-analysis/).
+  ANALYSIS_PIPELINE_VERSION: z.coerce.number().int().positive().optional().default(2),
+  CHEAP_TEXT_MODEL: z.string().optional().default(""),
+  REASONING_MODEL: z.string().optional().default(""),
+  MAX_TRANSCRIPT_WINDOWS: z.coerce.number().int().positive().optional().default(3),
+  TRANSCRIPT_CONTEXT_BEFORE_SECONDS: z.coerce.number().int().nonnegative().optional().default(30),
+  TRANSCRIPT_CONTEXT_AFTER_SECONDS: z.coerce.number().int().nonnegative().optional().default(60),
+  MAX_TRANSCRIPT_MODEL_CHARS: z.coerce.number().int().positive().optional().default(12000),
+  ENABLE_NATIVE_VIDEO_ANALYSIS: z
+    .enum(["true", "false"])
+    .optional()
+    .default("true")
+    .transform((v) => v === "true"),
+  VIDEO_WINDOW_SECONDS: z.coerce.number().int().positive().optional().default(90),
+  MAX_VIDEO_WINDOWS: z.coerce.number().int().positive().optional().default(3),
+  MAX_NATIVE_VIDEO_CALLS_PER_VIDEO: z.coerce.number().int().positive().optional().default(3),
+  MAX_NATIVE_VIDEO_SECONDS_PER_VIDEO: z.coerce.number().int().positive().optional().default(300),
+  MAX_ESTIMATED_COST_PER_VIDEO_USD: z.coerce.number().positive().optional().default(0.15),
 });
 
 export type AppEnv = z.infer<typeof envSchema>;
@@ -44,4 +63,16 @@ export function hasAnthropicCredentials(): boolean {
 
 export function hasYouTubeCredentials(): boolean {
   return getEnv().YOUTUBE_API_KEY.length > 0;
+}
+
+/** Stage 2's cheap transcript-classification model — falls back to ANTHROPIC_MODEL if unset. */
+export function getCheapTextModel(): string {
+  const env = getEnv();
+  return env.CHEAP_TEXT_MODEL || env.ANTHROPIC_MODEL;
+}
+
+/** The reasoning model used for brand normalisation / conflicting-evidence classification — falls back to ANTHROPIC_MODEL if unset. */
+export function getReasoningModel(): string {
+  const env = getEnv();
+  return env.REASONING_MODEL || env.ANTHROPIC_MODEL;
 }

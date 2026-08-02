@@ -22,11 +22,7 @@ async function processOnce(): Promise<boolean> {
 
   console.log(`[worker] processing video analysis job ${job.id} for video ${job.videoId}`);
   try {
-    const video = await prisma.video.findUnique({ where: { id: job.videoId } });
-    await runVideoAnalysis(job.id, job.videoId, {
-      resumeFromSeconds: video?.secondsAnalysed ?? 0,
-      forceMode: job.analysisMode,
-    });
+    await runVideoAnalysis(job.id, job.videoId, { forceMode: job.analysisMode });
     console.log(`[worker] completed job ${job.id}`);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);

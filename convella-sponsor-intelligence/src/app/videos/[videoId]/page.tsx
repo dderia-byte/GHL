@@ -9,6 +9,7 @@ import { TranscriptPanel } from "./transcript-panel";
 import { ManualDetectionForm } from "./manual-detection-form";
 import { VideoJobActions } from "./video-job-actions";
 import { AnalysisInputsPanel } from "./analysis-inputs-panel";
+import { AnalysisPathwayPanel } from "./analysis-pathway-panel";
 
 export const dynamic = "force-dynamic";
 
@@ -33,6 +34,22 @@ export default async function VideoAnalysisPage({ params }: { params: Promise<{ 
   const modelUsage = (latestJob?.modelUsage ?? null) as { provider?: string } | null;
   const analysisInputsParsed = analysisInputsUsedSchema.safeParse(video.lastAnalysisInputs);
   const analysisInputs = analysisInputsParsed.success ? analysisInputsParsed.data : null;
+  const usageRow = video.analysisUsages[0];
+  const usage = usageRow
+    ? {
+        resolvedAtStage: usageRow.resolvedAtStage,
+        textModelCalls: usageRow.textModelCalls,
+        reasoningModelCalls: usageRow.reasoningModelCalls,
+        videoModelCalls: usageRow.videoModelCalls,
+        transcriptCharactersSent: usageRow.transcriptCharactersSent,
+        nativeVideoSecondsAnalysed: usageRow.nativeVideoSecondsAnalysed,
+        totalEstimatedCost: Number(usageRow.totalEstimatedCost),
+        costLimitReached: usageRow.costLimitReached,
+        skippedExpensiveReason: usageRow.skippedExpensiveReason,
+        nativeAudioUsed: usageRow.nativeAudioUsed,
+        visualAnalysisUsed: usageRow.visualAnalysisUsed,
+      }
+    : null;
 
   return (
     <div className="flex flex-col gap-6">
@@ -61,9 +78,9 @@ export default async function VideoAnalysisPage({ params }: { params: Promise<{ 
         <StatCard label="Views" value={formatNumber(video.viewCount)} />
         <StatCard label="Likes" value={formatNumber(video.likeCount)} />
         <StatCard label="Duration" value={formatDuration(video.durationSeconds)} />
-        <StatCard label="Seconds analysed" value={video.secondsAnalysed} />
-        <StatCard label="Chunks processed" value={video.chunksProcessed} />
-        <StatCard label="Est. cost" value={latestJob ? `$${latestJob.estimatedCost.toFixed(4)}` : "—"} />
+        <StatCard label="Resolved at stage" value={usage?.resolvedAtStage ?? "—"} />
+        <StatCard label="Native video seconds" value={usage?.nativeVideoSecondsAnalysed ?? 0} />
+        <StatCard label="Est. cost" value={usage ? `$${usage.totalEstimatedCost.toFixed(4)}` : latestJob ? `$${latestJob.estimatedCost.toFixed(4)}` : "—"} />
       </div>
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
@@ -81,7 +98,9 @@ export default async function VideoAnalysisPage({ params }: { params: Promise<{ 
               <p className="mt-4 text-sm text-slate-500">
                 {video.analysisStatus === "NO_SPONSOR_FOUND"
                   ? "No sponsor was detected in this video."
-                  : "No sponsor detections yet."}
+                  : video.analysisStatus === "HUMAN_REVIEW_REQUIRED"
+                    ? "No stage reached the confirmation threshold — see the analysis pathway panel for the best candidate found and why."
+                    : "No sponsor detections yet."}
               </p>
             ) : (
               <div className="mt-4 flex flex-col gap-4">
@@ -106,6 +125,8 @@ export default async function VideoAnalysisPage({ params }: { params: Promise<{ 
         </div>
 
         <div className="flex flex-col gap-6">
+          <AnalysisPathwayPanel jobStatus={latestJob?.status} usage={usage} />
+
           <Card>
             <h2 className="text-sm font-semibold text-slate-900">Analysis status</h2>
             <dl className="mt-3 flex flex-col gap-2 text-sm">

@@ -1,8 +1,8 @@
-import { hasAnthropicCredentials } from "@/lib/env";
+import { hasAnthropicCredentials, getReasoningModel } from "@/lib/env";
 import { domainMatchesBrand } from "@/lib/brand/normalize";
 import type { DescriptionSignals } from "@/lib/signals/description";
 import type { SponsorEvidenceInput } from "@/lib/video-analysis/types";
-import { callAnthropicStructured } from "./client";
+import { callAnthropicStructured, callAnthropicStructuredWithUsage } from "./client";
 import {
   aiClassificationResponseSchema,
   competitorSuggestionsResponseSchema,
@@ -82,7 +82,14 @@ function heuristicPlacementType(evidence: SponsorEvidenceInput[]): AiDetection["
 }
 
 /** Deterministic fallback used when Anthropic is not configured — not a fake AI call, just a documented heuristic. */
-function classifyWithHeuristicFallback(req: ClassificationRequest): AiDetection {
+/**
+ * Deterministic classification with no model call at all — used both when Anthropic
+ * isn't configured, and deliberately by the sponsor-analysis pipeline for any sponsor
+ * resolved at Stage 1 (a confident, explicit description-level disclosure already
+ * carries enough signal that spending a reasoning-model call to reclassify it would
+ * defeat the entire point of stopping at the cheapest possible stage).
+ */
+export function classifyWithHeuristicFallback(req: ClassificationRequest): AiDetection {
   const strongest = [...req.evidence].sort((a, b) => b.strength - a.strength)[0];
   const matchingUrl = req.descriptionSignals.urls.find(
     (u) => req.brandDomain && domainMatchesBrand(u, req.brandDomain),
@@ -100,7 +107,7 @@ function classifyWithHeuristicFallback(req: ClassificationRequest): AiDetection 
     evidenceText: strongest?.text ?? "No direct evidence text available.",
     evidenceSource: strongest?.source ?? "DESCRIPTION",
     confidenceScore: strongest?.strength ?? 0,
-    reasoningSummary: `Heuristic classification (Anthropic not configured): based on ${req.evidence.length} evidence item(s) referencing ${req.brandName}.`,
+    reasoningSummary: `Deterministic classification (no reasoning-model call made) based on ${req.evidence.length} evidence item(s) referencing ${req.brandName}.`,
     promotionalUrl: matchingUrl ?? null,
     discountCode: req.descriptionSignals.discountCodes[0] ?? null,
     callToAction: req.descriptionSignals.callsToAction[0] ?? null,
@@ -115,12 +122,25 @@ function classifyWithHeuristicFallback(req: ClassificationRequest): AiDetection 
  * so the pipeline still functions without API credentials.
  */
 export async function classifySponsorship(req: ClassificationRequest): Promise<AiDetection> {
-  if (!hasAnthropicCredentials()) return classifyWithHeuristicFallback(req);
+  const { detection } = await classifySponsorshipWithUsage(req);
+  return detection;
+}
+
+/** Same as {@link classifySponsorship} but also reports real token usage, for the sponsor-analysis pipeline's cost tracking. Uses REASONING_MODEL (falls back to ANTHROPIC_MODEL). */
+export async function classifySponsorshipWithUsage(
+  req: ClassificationRequest,
+): Promise<{ detection: AiDetection; inputTokens: number; outputTokens: number }> {
+  if (!hasAnthropicCredentials()) return { detection: classifyWithHeuristicFallback(req), inputTokens: 0, outputTokens: 0 };
 
   const prompt = buildClassificationPrompt(req);
-  const result = await callAnthropicStructured(CLASSIFICATION_SYSTEM_PROMPT, prompt, aiClassificationResponseSchema);
+  const { result, inputTokens, outputTokens } = await callAnthropicStructuredWithUsage(
+    CLASSIFICATION_SYSTEM_PROMPT,
+    prompt,
+    aiClassificationResponseSchema,
+    getReasoningModel(),
+  );
 
-  return result.detections[0] ?? classifyWithHeuristicFallback(req);
+  return { detection: result.detections[0] ?? classifyWithHeuristicFallback(req), inputTokens, outputTokens };
 }
 
 const COMPETITOR_SYSTEM_PROMPT = `You are a market-research assistant for an influencer-marketing agency.

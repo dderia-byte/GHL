@@ -54,10 +54,6 @@ export default function SettingsPage() {
             <dd className="font-medium text-slate-800">{env.DEFAULT_ANALYSIS_MODE.replaceAll("_", " ")}</dd>
           </div>
           <div className="flex items-center justify-between">
-            <dt className="text-slate-600">Default chunk length</dt>
-            <dd className="font-medium text-slate-800">{env.DEFAULT_CHUNK_SECONDS} seconds (30s for videos under 10 minutes)</dd>
-          </div>
-          <div className="flex items-center justify-between">
             <dt className="text-slate-600">Transcript provider</dt>
             <dd className="font-medium text-slate-800">{env.TRANSCRIPT_PROVIDER}</dd>
           </div>
@@ -69,6 +65,58 @@ export default function SettingsPage() {
         <p className="mt-4 text-xs text-slate-500">
           The analysis mode (First sponsor only / All sponsors) can also be chosen per channel or video when adding
           it — the default above only applies when not overridden.
+        </p>
+      </Card>
+
+      <Card>
+        <h2 className="text-sm font-semibold text-slate-900">Cost-optimised pipeline (v{env.ANALYSIS_PIPELINE_VERSION})</h2>
+        <p className="mt-1 text-xs text-slate-500">
+          Free deterministic analysis first, then cheap targeted transcript analysis, then expensive native video analysis —
+          only as far as each video actually needs.
+        </p>
+        <dl className="mt-3 flex flex-col gap-3 text-sm">
+          <div className="flex items-center justify-between">
+            <dt className="text-slate-600">Native video analysis (Stage 3)</dt>
+            <dd>
+              <Badge tone={env.ENABLE_NATIVE_VIDEO_ANALYSIS ? "success" : "neutral"}>
+                {env.ENABLE_NATIVE_VIDEO_ANALYSIS ? "Enabled" : "Disabled"}
+              </Badge>
+            </dd>
+          </div>
+          <div className="flex items-center justify-between">
+            <dt className="text-slate-600">Cheap text model (Stage 2)</dt>
+            <dd className="font-medium text-slate-800">{env.CHEAP_TEXT_MODEL || `${env.ANTHROPIC_MODEL} (default)`}</dd>
+          </div>
+          <div className="flex items-center justify-between">
+            <dt className="text-slate-600">Reasoning model</dt>
+            <dd className="font-medium text-slate-800">{env.REASONING_MODEL || `${env.ANTHROPIC_MODEL} (default)`}</dd>
+          </div>
+          <div className="flex items-center justify-between">
+            <dt className="text-slate-600">Max estimated cost per video</dt>
+            <dd className="font-medium text-slate-800">${env.MAX_ESTIMATED_COST_PER_VIDEO_USD.toFixed(2)}</dd>
+          </div>
+          <div className="flex items-center justify-between">
+            <dt className="text-slate-600">Max native video calls / seconds per video</dt>
+            <dd className="font-medium text-slate-800">
+              {env.MAX_NATIVE_VIDEO_CALLS_PER_VIDEO} calls / {env.MAX_NATIVE_VIDEO_SECONDS_PER_VIDEO}s
+            </dd>
+          </div>
+          <div className="flex items-center justify-between">
+            <dt className="text-slate-600">Video window length / max windows</dt>
+            <dd className="font-medium text-slate-800">
+              {env.VIDEO_WINDOW_SECONDS}s / {env.MAX_VIDEO_WINDOWS}
+            </dd>
+          </div>
+          <div className="flex items-center justify-between">
+            <dt className="text-slate-600">Transcript windows / context / char cap</dt>
+            <dd className="font-medium text-slate-800">
+              {env.MAX_TRANSCRIPT_WINDOWS} windows, -{env.TRANSCRIPT_CONTEXT_BEFORE_SECONDS}s/+{env.TRANSCRIPT_CONTEXT_AFTER_SECONDS}s, {env.MAX_TRANSCRIPT_MODEL_CHARS.toLocaleString()} chars
+            </dd>
+          </div>
+        </dl>
+        <p className="mt-4 text-xs text-slate-500">
+          Set via environment variables — see .env.example. When the cost limit would be exceeded before a sponsor is
+          confirmed, the video is marked &quot;Human review required&quot; instead of making the request.
         </p>
       </Card>
 
