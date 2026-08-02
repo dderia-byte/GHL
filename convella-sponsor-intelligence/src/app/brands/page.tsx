@@ -26,6 +26,7 @@ export default async function BrandsPage() {
                 <th className="px-4 py-3">Creators</th>
                 <th className="px-4 py-3">Avg. confidence</th>
                 <th className="px-4 py-3">Review status</th>
+                <th className="px-4 py-3">Last detected</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
@@ -45,6 +46,9 @@ export default async function BrandsPage() {
                     {row.averageConfidence !== null ? `${Math.round(row.averageConfidence * 100)}%` : "—"}
                   </td>
                   <td className="px-4 py-3 text-slate-500">{row.reviewStatus}</td>
+                  <td className="px-4 py-3 text-slate-500">
+                    {row.mostRecentDetectionAt ? new Date(row.mostRecentDetectionAt).toLocaleDateString() : "—"}
+                  </td>
                 </tr>
               ))}
             </tbody>

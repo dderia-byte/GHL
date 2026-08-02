@@ -63,7 +63,10 @@ export default async function BrandDetailsPage({ params }: { params: Promise<{ b
                       </div>
                     </div>
                     <p className="mt-1 text-xs text-slate-500">
-                      {detection.video.channel.name} · {detection.placementType.replaceAll("_", " ")}
+                      {detection.video.channel.name}
+                      {detection.video.publishedAt && <> · {new Date(detection.video.publishedAt).toLocaleDateString()}</>}
+                      {" · "}
+                      {detection.placementType.replaceAll("_", " ")}
                       {detection.startTimestampSeconds !== null && (
                         <>
                           {" · "}
