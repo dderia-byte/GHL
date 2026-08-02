@@ -1,6 +1,8 @@
 import { getEnv, hasAnthropicCredentials, hasGeminiCredentials, hasYouTubeCredentials } from "@/lib/env";
+import { getSetting } from "@/lib/settings";
 import { PageHeader, Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { DiscoverySettingsForm } from "./discovery-settings-form";
 
 export const dynamic = "force-dynamic";
 
@@ -8,8 +10,18 @@ function ConfiguredBadge({ configured }: { configured: boolean }) {
   return <Badge tone={configured ? "success" : "warning"}>{configured ? "Configured" : "Not configured"}</Badge>;
 }
 
-export default function SettingsPage() {
+export default async function SettingsPage() {
   const env = getEnv();
+  const discoverySettings = {
+    dailyCostLimitUsd: await getSetting("budgets.dailyCostLimitUsd"),
+    perRunCostLimitUsd: await getSetting("budgets.perRunCostLimitUsd"),
+    dailyQuotaUnits: await getSetting("budgets.dailyQuotaUnits"),
+    maxCreatorsPerRun: await getSetting("discovery.maxCreatorsPerRun"),
+    deepScanVideoCount: await getSetting("discovery.deepScanVideoCount"),
+    maxSubscribers: await getSetting("discovery.maxSubscribers"),
+    maxVideoAgeDays: await getSetting("discovery.maxVideoAgeDays"),
+    rejectionCooldownDays: await getSetting("discovery.rejectionCooldownDays"),
+  };
 
   return (
     <div className="flex flex-col gap-6">
@@ -118,6 +130,17 @@ export default function SettingsPage() {
           Set via environment variables — see .env.example. When the cost limit would be exceeded before a sponsor is
           confirmed, the video is marked &quot;Human review required&quot; instead of making the request.
         </p>
+      </Card>
+
+      <Card>
+        <h2 className="text-sm font-semibold text-slate-900">Discovery limits &amp; budgets</h2>
+        <p className="mt-1 text-xs text-slate-500">
+          Operator-editable at runtime (stored in the database, no redeploy needed). Changes apply from the NEXT
+          discovery run — a run in progress keeps the limits it started with.
+        </p>
+        <div className="mt-4">
+          <DiscoverySettingsForm values={discoverySettings} />
+        </div>
       </Card>
 
       <Card className="bg-slate-50">

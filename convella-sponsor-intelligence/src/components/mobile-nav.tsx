@@ -3,15 +3,13 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Settings } from "lucide-react";
-import { NAV_ITEMS } from "./sidebar";
-
-function isActive(pathname: string, href: string) {
-  return href === "/" ? pathname === "/" : pathname.startsWith(href);
-}
+import { NAV_ITEMS, isNavActive } from "./sidebar";
 
 export function MobileNav() {
   const pathname = usePathname();
   const items = [...NAV_ITEMS, { href: "/settings", label: "Settings", icon: Settings }];
+  const allHrefs = items.map((i) => i.href);
+  const isActive = (path: string, href: string) => isNavActive(path, href, allHrefs);
 
   return (
     <nav className="flex gap-1 overflow-x-auto border-b border-border bg-card px-3 py-2 lg:hidden">

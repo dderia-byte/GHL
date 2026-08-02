@@ -2,7 +2,7 @@ import { prisma } from "@/lib/db";
 import { recordAudit } from "@/lib/audit/log";
 import { getYouTubeSearchProvider } from "@/lib/youtube/search-provider";
 import { youtubeClient } from "@/lib/youtube/client";
-import type { YouTubeChannelResource, YouTubeSearchResult } from "@/lib/youtube/types";
+import type { YouTubeChannelResource } from "@/lib/youtube/types";
 import { upsertChannelRecord } from "@/lib/jobs/channel-scan-pipeline";
 import { enqueueCreatorQualificationJob } from "@/lib/jobs/queue";
 import type { RejectionReason } from "@/generated/prisma/enums";

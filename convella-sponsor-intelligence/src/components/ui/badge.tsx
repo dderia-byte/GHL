@@ -63,3 +63,39 @@ export function ConfidenceBadge({ score }: { score: number }) {
   const tone: BadgeTone = score >= 0.9 ? "success" : score >= 0.75 ? "info" : score >= 0.5 ? "warning" : "danger";
   return <Badge tone={tone}>{Math.round(score * 100)}%</Badge>;
 }
+
+const DISCOVERY_RUN_STATUS_TONE: Record<string, BadgeTone> = {
+  QUEUED: "info",
+  RUNNING: "info",
+  PAUSED: "warning",
+  COMPLETED: "success",
+  HALTED_COST_LIMIT: "warning",
+  HALTED_QUOTA_LIMIT: "warning",
+  CANCELLED: "neutral",
+  FAILED: "danger",
+};
+
+export function DiscoveryRunStatusBadge({ status }: { status: string }) {
+  return <Badge tone={DISCOVERY_RUN_STATUS_TONE[status] ?? "neutral"}>{status.replaceAll("_", " ")}</Badge>;
+}
+
+const CANDIDATE_STATE_TONE: Record<string, BadgeTone> = {
+  DISCOVERED: "neutral",
+  FILTERED_OUT: "neutral",
+  PENDING_ANALYSIS: "info",
+  ANALYSING_NEWEST: "info",
+  CHECKING_SIGNALS: "info",
+  ANALYSING_SECOND: "info",
+  QUALIFIED: "success",
+  DEEP_SCANNING: "info",
+  QUALIFIED_PARTIAL: "warning",
+  COMPLETED: "success",
+  REJECTED_NOT_COMMERCIAL: "neutral",
+  REJECTED_NO_SPONSOR: "neutral",
+  CANCELLED: "neutral",
+  ERRORED: "danger",
+};
+
+export function CandidateStateBadge({ state }: { state: string }) {
+  return <Badge tone={CANDIDATE_STATE_TONE[state] ?? "neutral"}>{state.replaceAll("_", " ")}</Badge>;
+}

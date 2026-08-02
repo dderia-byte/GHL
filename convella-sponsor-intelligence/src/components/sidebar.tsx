@@ -13,16 +13,34 @@ import {
   ChevronsLeft,
   ChevronsRight,
   Sparkles,
+  Radar,
+  Search,
+  Users,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 
 export const NAV_ITEMS: { href: string; label: string; icon: LucideIcon }[] = [
   { href: "/", label: "Dashboard", icon: LayoutDashboard },
   { href: "/channels/new", label: "Add channel or video", icon: PlusCircle },
+  { href: "/discovery", label: "Discovery", icon: Radar },
+  { href: "/discovery/queries", label: "Search queries", icon: Search },
+  { href: "/discovery/creators", label: "Discovered creators", icon: Users },
   { href: "/brands", label: "Brands", icon: Building2 },
   { href: "/review", label: "Review queue", icon: ClipboardCheck },
   { href: "/jobs", label: "Analysis jobs", icon: ListChecks },
 ];
+
+/**
+ * Longest-matching-prefix active detection: /discovery/queries must light up
+ * "Search queries" alone, not also the shorter "/discovery" item.
+ */
+export function isNavActive(pathname: string, href: string, allHrefs: string[]): boolean {
+  const matches = (candidate: string) =>
+    candidate === "/" ? pathname === "/" : pathname === candidate || pathname.startsWith(`${candidate}/`);
+  if (!matches(href)) return false;
+  const longest = allHrefs.filter(matches).sort((a, b) => b.length - a.length)[0];
+  return longest === href;
+}
 
 const STORAGE_KEY = "convella-sidebar-collapsed";
 const listeners = new Set<() => void>();
@@ -45,8 +63,10 @@ function setCollapsedStore(value: boolean) {
   listeners.forEach((listener) => listener());
 }
 
+const ALL_NAV_HREFS = [...NAV_ITEMS.map((i) => i.href), "/settings"];
+
 function isActive(pathname: string, href: string) {
-  return href === "/" ? pathname === "/" : pathname.startsWith(href);
+  return isNavActive(pathname, href, ALL_NAV_HREFS);
 }
 
 export function Sidebar() {
