@@ -7,3 +7,12 @@ export async function listAnalysisJobs() {
     include: { channel: true, video: true },
   });
 }
+
+/** Cheap live counts for the top-header queue-status indicator. */
+export async function getQueueStatusSummary() {
+  const [queued, processing] = await Promise.all([
+    prisma.analysisJob.count({ where: { status: "QUEUED" } }),
+    prisma.analysisJob.count({ where: { status: "PROCESSING" } }),
+  ]);
+  return { queued, processing };
+}

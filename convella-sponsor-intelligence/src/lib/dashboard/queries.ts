@@ -54,11 +54,28 @@ export async function getDashboardData() {
 
   const brandIds = detectionsByBrand.map((d) => d.brandId).filter((id): id is string => Boolean(id));
   const brands = brandIds.length ? await prisma.brand.findMany({ where: { id: { in: brandIds } } }) : [];
+  const brandDetections = brandIds.length
+    ? await prisma.sponsorshipDetection.findMany({
+        where: { brandId: { in: brandIds } },
+        select: { brandId: true, videoId: true, confidenceScore: true, createdAt: true },
+      })
+    : [];
   const topBrands = detectionsByBrand
-    .map((d) => ({
-      brand: brands.find((b) => b.id === d.brandId),
-      count: d._count.brandId,
-    }))
+    .map((d) => {
+      const forBrand = brandDetections.filter((det) => det.brandId === d.brandId);
+      const distinctVideos = new Set(forBrand.map((det) => det.videoId)).size;
+      const avgConfidence = forBrand.length ? forBrand.reduce((sum, det) => sum + det.confidenceScore, 0) / forBrand.length : 0;
+      const lastDetectedAt = forBrand.length
+        ? forBrand.reduce((latest, det) => (det.createdAt > latest ? det.createdAt : latest), forBrand[0].createdAt)
+        : null;
+      return {
+        brand: brands.find((b) => b.id === d.brandId),
+        count: d._count.brandId,
+        videoCount: distinctVideos,
+        avgConfidence,
+        lastDetectedAt,
+      };
+    })
     .filter((b) => b.brand);
 
   const categoryConfirmedCounts = new Map<string, number>();
