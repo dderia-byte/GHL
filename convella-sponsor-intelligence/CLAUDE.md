@@ -15,10 +15,19 @@ system is deliberately conservative about auto-confirming anything.
 ## Non-negotiables (do not regress these)
 
 - **Never scrape/download YouTube video or audio.** All metadata comes from the
-  official YouTube Data API v3 (`src/lib/youtube/client.ts`). Real-time multimodal
-  inspection depends on an *authorised* media reference the operator supplied — see
-  `RunVideoAnalysisOptions` / `mediaReference` in
-  `src/lib/jobs/video-analysis-pipeline.ts`.
+  official YouTube Data API v3 (`src/lib/youtube/client.ts`). Real native video/audio
+  inspection for *public* videos uses Gemini's own YouTube-URL support
+  (`{ type: "YOUTUBE_URL" }` in `src/lib/video-analysis/types.ts` — see
+  `GeminiVideoAnalysisProvider`): Gemini fetches and decodes the video itself, this
+  system never downloads it. Private/unlisted videos or any other legitimately obtained
+  raw file go through an *authorised* `GEMINI_FILE`/`LOCAL_UPLOAD` media reference the
+  operator supplied instead — see `MediaReference` and `RunVideoAnalysisOptions` /
+  `mediaReference` in `src/lib/jobs/video-analysis-pipeline.ts`. Either way, the
+  model's self-reported "I analysed the video/audio" claims are never trusted as-is —
+  they're cross-checked against Gemini's real per-modality token usage
+  (`usageMetadata.promptTokensDetails`) before being reported anywhere (`analysisInputs`
+  on `SponsorRecognitionResult`), and a failed video-access attempt falls back to
+  transcript/description text with the failure recorded, never silently hidden.
 - **The stopping condition is strict**: `recognised && confidence >= 0.90 && explicit
   commercial signal && brand unambiguous`. Don't loosen this to make demos "work" —
   fix the underlying evidence/scoring instead (see `src/lib/decision/`).

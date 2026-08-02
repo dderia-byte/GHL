@@ -28,7 +28,7 @@ async function simulateAnalysis(mode: AnalysisMode, chunkCount: number) {
 
   for (let i = 0; i < chunkCount; i += 1) {
     const chunkResult = await provider.analyseChunk(
-      { videoId: "vid1", startSeconds: i * 10, endSeconds: (i + 1) * 10, mediaReference: "" },
+      { videoId: "vid1", startSeconds: i * 10, endSeconds: (i + 1) * 10, mediaReference: null },
       {
         title: "A video",
         description,

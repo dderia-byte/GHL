@@ -2,9 +2,23 @@ import { describe, expect, it } from "vitest";
 import { evaluateSponsorshipDecision } from "@/lib/decision/engine";
 import { analyseDescription } from "@/lib/signals/description";
 import { analyseYouTubeMetadata } from "@/lib/signals/metadata";
-import type { SponsorEvidenceInput, SponsorRecognitionResult } from "@/lib/video-analysis/types";
+import type { AnalysisInputsUsed, SponsorEvidenceInput, SponsorRecognitionResult } from "@/lib/video-analysis/types";
 
 const noMetadataSignal = analyseYouTubeMetadata({ paidProductPlacement: false, tags: [], title: "x" });
+
+// The decision engine only reads brandName/recognised/evidence/reason/timestamps from a
+// chunk result — analysisInputs is irrelevant to its scoring, so every test case here
+// shares this placeholder value.
+const testAnalysisInputs: AnalysisInputsUsed = {
+  mediaSourceMethod: "NONE",
+  videoInputAnalysed: false,
+  nativeAudioAnalysed: false,
+  visualFramesAnalysed: false,
+  transcriptProvided: true,
+  descriptionProvided: true,
+  model: "test",
+  providerError: null,
+};
 
 describe("evaluateSponsorshipDecision — confirmed sponsor", () => {
   it("stops with high confidence when an explicit spoken statement, on-screen branding and a matching description link all agree", () => {
@@ -28,6 +42,7 @@ describe("evaluateSponsorshipDecision — confirmed sponsor", () => {
       endTimestampSeconds: 100,
       evidence,
       reason: "Explicit sponsorship statement with corroborating evidence.",
+      analysisInputs: testAnalysisInputs,
     };
 
     const result = evaluateSponsorshipDecision({
@@ -63,6 +78,7 @@ describe("evaluateSponsorshipDecision — organic mention", () => {
       endTimestampSeconds: null,
       evidence,
       reason: "No disclosure or promotional context.",
+      analysisInputs: testAnalysisInputs,
     };
 
     const result = evaluateSponsorshipDecision({
@@ -90,6 +106,7 @@ describe("evaluateSponsorshipDecision — organic mention", () => {
       endTimestampSeconds: 20,
       evidence: [{ source: "VIDEO_VISUAL", timestampSeconds: 10, text: "SomeBrand product appears in a comparison.", strength: 0.9 }],
       reason: "Just a comparison, not a sponsorship.",
+      analysisInputs: testAnalysisInputs,
     };
     const result = evaluateSponsorshipDecision({
       chunkResult,
@@ -121,6 +138,7 @@ describe("evaluateSponsorshipDecision — affiliate candidate", () => {
       endTimestampSeconds: null,
       evidence,
       reason: "Affiliate disclosure and tracked link, but no explicit sponsorship statement.",
+      analysisInputs: testAnalysisInputs,
     };
 
     const result = evaluateSponsorshipDecision({
@@ -154,6 +172,7 @@ describe("evaluateSponsorshipDecision — ambiguous brand identity", () => {
       endTimestampSeconds: null,
       evidence,
       reason: "Ambiguous — no domain or sponsorship context ties this to a specific company.",
+      analysisInputs: testAnalysisInputs,
     };
     const result = evaluateSponsorshipDecision({
       chunkResult,
@@ -182,6 +201,7 @@ describe("evaluateSponsorshipDecision — contradictory evidence", () => {
     endTimestampSeconds: 40,
     evidence: baseEvidence,
     reason: "Explicit statement.",
+    analysisInputs: testAnalysisInputs,
   };
 
   it("reduces confidence when contradictory evidence is present", () => {
@@ -224,6 +244,7 @@ describe("evaluateSponsorshipDecision — below-threshold detections", () => {
       endTimestampSeconds: null,
       evidence,
       reason: "Passing mention only.",
+      analysisInputs: testAnalysisInputs,
     };
     const result = evaluateSponsorshipDecision({
       chunkResult,

@@ -115,6 +115,16 @@ describe("sponsorRecognitionResultSchema", () => {
       endTimestampSeconds: 60,
       evidence: [{ source: "VIDEO_AUDIO", timestampSeconds: 10, text: "Sponsored by Acme.", strength: 0.9 }],
       reason: "Explicit disclosure.",
+      analysisInputs: {
+        mediaSourceMethod: "YOUTUBE_URL",
+        videoInputAnalysed: true,
+        nativeAudioAnalysed: true,
+        visualFramesAnalysed: false,
+        transcriptProvided: false,
+        descriptionProvided: true,
+        model: "gemini-flash-latest",
+        providerError: null,
+      },
     };
     expect(() => sponsorRecognitionResultSchema.parse(payload)).not.toThrow();
   });

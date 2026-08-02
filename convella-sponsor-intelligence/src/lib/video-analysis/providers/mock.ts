@@ -1,9 +1,22 @@
 import type {
+  AnalysisInputsUsed,
   SponsorRecognitionResult,
   VideoAnalysisContext,
   VideoAnalysisProvider,
   VideoChunk,
 } from "../types";
+
+/** The mock provider never has real media — evidence sourced from VIDEO_AUDIO/VIDEO_VISUAL in its scripts is fictional demonstration data, not a claim of real modality analysis. */
+const MOCK_ANALYSIS_INPUTS: AnalysisInputsUsed = {
+  mediaSourceMethod: "NONE",
+  videoInputAnalysed: false,
+  nativeAudioAnalysed: false,
+  visualFramesAnalysed: false,
+  transcriptProvided: false,
+  descriptionProvided: false,
+  model: "mock",
+  providerError: null,
+};
 
 const NO_SPONSOR_RESULT: SponsorRecognitionResult = {
   recognised: false,
@@ -16,6 +29,7 @@ const NO_SPONSOR_RESULT: SponsorRecognitionResult = {
   endTimestampSeconds: null,
   evidence: [],
   reason: "Mock provider: no commercial signal detected in this chunk.",
+  analysisInputs: MOCK_ANALYSIS_INPUTS,
 };
 
 /** Fictional demonstration script: introduces a brand mention, then confirms it as a sponsor. */
@@ -31,6 +45,7 @@ export const DEFAULT_MOCK_SCRIPT: SponsorRecognitionResult[] = [
       },
     ],
     reason: "Mock provider: intro segment, no commercial signal yet.",
+    analysisInputs: MOCK_ANALYSIS_INPUTS,
   },
   {
     recognised: true,
@@ -69,6 +84,7 @@ export const DEFAULT_MOCK_SCRIPT: SponsorRecognitionResult[] = [
     ],
     reason:
       "Mock provider: explicit spoken sponsorship disclosure, matching on-screen branding and a matching description link.",
+    analysisInputs: MOCK_ANALYSIS_INPUTS,
   },
 ];
 
@@ -84,9 +100,16 @@ export class MockVideoAnalysisProvider implements VideoAnalysisProvider {
 
   constructor(private readonly script: SponsorRecognitionResult[] = DEFAULT_MOCK_SCRIPT) {}
 
-  async analyseChunk(_chunk: VideoChunk, _context: VideoAnalysisContext): Promise<SponsorRecognitionResult> {
+  async analyseChunk(_chunk: VideoChunk, context: VideoAnalysisContext): Promise<SponsorRecognitionResult> {
     const result = this.script[this.callCount] ?? NO_SPONSOR_RESULT;
     this.callCount += 1;
-    return result;
+    return {
+      ...result,
+      analysisInputs: {
+        ...result.analysisInputs,
+        transcriptProvided: context.transcriptSegments.length > 0,
+        descriptionProvided: context.description.trim().length > 0,
+      },
+    };
   }
 }

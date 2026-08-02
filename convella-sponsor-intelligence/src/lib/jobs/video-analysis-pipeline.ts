@@ -4,7 +4,7 @@ import { analyseDescription } from "@/lib/signals/description";
 import { analyseYouTubeMetadata } from "@/lib/signals/metadata";
 import { ensureTranscriptForAnalysis } from "@/lib/transcript/service";
 import { getVideoAnalysisProvider } from "@/lib/video-analysis";
-import type { SponsorEvidenceInput, SponsorRecognitionResult } from "@/lib/video-analysis/types";
+import type { AnalysisInputsUsed, MediaReference, SponsorEvidenceInput, SponsorRecognitionResult } from "@/lib/video-analysis/types";
 import type { DescriptionSignals } from "@/lib/signals/description";
 import { evaluateSponsorshipDecision } from "@/lib/decision/engine";
 import { classifySponsorship } from "@/lib/anthropic/reasoning-service";
@@ -59,6 +59,36 @@ function descriptionOnlyFallback(descriptionSignals: DescriptionSignals): Sponso
       },
     ],
     reason: `Deterministic description scan found an explicit sponsorship disclosure naming ${brandName}; the AI video-analysis provider did not independently confirm this from chunk audio/visuals.`,
+    analysisInputs: {
+      mediaSourceMethod: "NONE",
+      videoInputAnalysed: false,
+      nativeAudioAnalysed: false,
+      visualFramesAnalysed: false,
+      transcriptProvided: false,
+      descriptionProvided: true,
+      model: "deterministic-description-scan",
+      providerError: null,
+    },
+  };
+}
+
+/**
+ * Aggregates each chunk's `AnalysisInputsUsed` into a single per-video summary
+ * (persisted on `Video.lastAnalysisInputs` for the "Inputs actually analysed" UI
+ * panel): a modality counts as analysed for the video if any chunk confirmed it, and
+ * the most recent provider error (if any) is kept so a failed native-video attempt is
+ * visible even if a later chunk succeeded via text-only fallback.
+ */
+function mergeAnalysisInputs(summary: AnalysisInputsUsed, chunk: AnalysisInputsUsed): AnalysisInputsUsed {
+  return {
+    mediaSourceMethod: summary.mediaSourceMethod,
+    videoInputAnalysed: summary.videoInputAnalysed || chunk.videoInputAnalysed,
+    nativeAudioAnalysed: summary.nativeAudioAnalysed || chunk.nativeAudioAnalysed,
+    visualFramesAnalysed: summary.visualFramesAnalysed || chunk.visualFramesAnalysed,
+    transcriptProvided: summary.transcriptProvided || chunk.transcriptProvided,
+    descriptionProvided: summary.descriptionProvided || chunk.descriptionProvided,
+    model: chunk.model || summary.model,
+    providerError: chunk.providerError ?? summary.providerError,
   };
 }
 
@@ -108,6 +138,16 @@ export async function runVideoAnalysis(jobId: string, videoId: string, options: 
   const transcript = await ensureTranscriptForAnalysis(videoId);
   const provider = getVideoAnalysisProvider();
 
+  // The video's own public YouTube URL, passed to Gemini as native video input so it
+  // can genuinely watch/listen to the video itself — this system never downloads or
+  // scrapes the video/audio; Gemini fetches it. Only public videos work this way (see
+  // GeminiVideoAnalysisProvider); if access fails for any reason the provider falls
+  // back to transcript/description text and records why via `analysisInputs`.
+  const mediaReference: MediaReference = {
+    type: "YOUTUBE_URL",
+    url: `https://www.youtube.com/watch?v=${video.youtubeVideoId}`,
+  };
+
   const chunkSeconds = video.durationSeconds < SHORT_VIDEO_SECONDS ? 30 : env.DEFAULT_CHUNK_SECONDS;
   const maxSeconds = Math.min(video.durationSeconds, MAX_ANALYSIS_SECONDS);
 
@@ -120,6 +160,16 @@ export async function runVideoAnalysis(jobId: string, videoId: string, options: 
   let anyConfirmed = false;
   let anyDetectionCreated = false;
   let cancelled = false;
+  let analysisInputsSummary: AnalysisInputsUsed = {
+    mediaSourceMethod: mediaReference.type,
+    videoInputAnalysed: false,
+    nativeAudioAnalysed: false,
+    visualFramesAnalysed: false,
+    transcriptProvided: false,
+    descriptionProvided: false,
+    model: "",
+    providerError: null,
+  };
 
   await prisma.video.update({ where: { id: videoId }, data: { analysisStatus: "PROCESSING" } });
 
@@ -137,7 +187,7 @@ export async function runVideoAnalysis(jobId: string, videoId: string, options: 
     );
 
     let chunkResult = await provider.analyseChunk(
-      { videoId: video.youtubeVideoId, startSeconds: cursor, endSeconds: end, mediaReference: "" },
+      { videoId: video.youtubeVideoId, startSeconds: cursor, endSeconds: end, mediaReference },
       {
         title: video.title,
         description: video.description,
@@ -146,6 +196,8 @@ export async function runVideoAnalysis(jobId: string, videoId: string, options: 
         candidateBrands: descriptionSignals.candidateBrands,
       },
     );
+
+    analysisInputsSummary = mergeAnalysisInputs(analysisInputsSummary, chunkResult.analysisInputs);
 
     if (!chunkResult.brandName && chunksProcessed === 0) {
       const fallback = descriptionOnlyFallback(descriptionSignals);
@@ -252,7 +304,12 @@ export async function runVideoAnalysis(jobId: string, videoId: string, options: 
 
   await prisma.video.update({
     where: { id: videoId },
-    data: { analysisStatus: finalStatus, stopReason, analysedAt: new Date() },
+    data: {
+      analysisStatus: finalStatus,
+      stopReason,
+      analysedAt: new Date(),
+      lastAnalysisInputs: JSON.parse(JSON.stringify(analysisInputsSummary)),
+    },
   });
 
   await prisma.analysisJob.update({

@@ -3,10 +3,12 @@ import Link from "next/link";
 import { getVideoDetails } from "@/lib/videos/queries";
 import { PageHeader, Card, StatCard } from "@/components/ui/card";
 import { AnalysisStatusBadge } from "@/components/ui/badge";
+import { analysisInputsUsedSchema } from "@/lib/video-analysis/types";
 import { DetectionCard } from "./detection-card";
 import { TranscriptPanel } from "./transcript-panel";
 import { ManualDetectionForm } from "./manual-detection-form";
 import { VideoJobActions } from "./video-job-actions";
+import { AnalysisInputsPanel } from "./analysis-inputs-panel";
 
 export const dynamic = "force-dynamic";
 
@@ -29,6 +31,8 @@ export default async function VideoAnalysisPage({ params }: { params: Promise<{ 
 
   const latestJob = video.analysisJobs[0];
   const modelUsage = (latestJob?.modelUsage ?? null) as { provider?: string } | null;
+  const analysisInputsParsed = analysisInputsUsedSchema.safeParse(video.lastAnalysisInputs);
+  const analysisInputs = analysisInputsParsed.success ? analysisInputsParsed.data : null;
 
   return (
     <div className="flex flex-col gap-6">
@@ -135,6 +139,8 @@ export default async function VideoAnalysisPage({ params }: { params: Promise<{ 
               <VideoJobActions videoId={video.id} canContinue={video.analysisStatus === "SPONSOR_FOUND" && video.analysisMode === "FIRST_SPONSOR_ONLY"} />
             </div>
           </Card>
+
+          <AnalysisInputsPanel analysisInputs={analysisInputs} />
 
           <Card>
             <h2 className="text-sm font-semibold text-slate-900">Transcript</h2>

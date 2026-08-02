@@ -131,6 +131,12 @@ model Video {
   stopReason      String?
   analysedAt      DateTime?
 
+  /// What was actually analysed on the most recent run (native YouTube video/audio,
+  /// visual frames, transcript, description; model; media source method; last provider
+  /// error, if any) — an `AnalysisInputsUsed` object, powers the "Inputs actually
+  /// analysed" panel. Null until the video has been analysed at least once.
+  lastAnalysisInputs Json?
+
   mediaAuthorised Boolean @default(false)
   notes           String?
 

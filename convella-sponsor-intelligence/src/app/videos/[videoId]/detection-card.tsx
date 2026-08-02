@@ -5,6 +5,8 @@ import { useActionState } from "react";
 import { Button } from "@/components/ui/button";
 import { ConfidenceBadge, ReviewStatusBadge, Badge } from "@/components/ui/badge";
 import { buildTimestampedVideoUrl } from "@/lib/youtube/parse";
+import { describeEvidenceSource } from "@/lib/video-analysis/evidence-labels";
+import type { ChunkEvidenceSource } from "@/lib/video-analysis/types";
 import {
   confirmDetectionAction,
   rejectDetectionAction,
@@ -101,7 +103,7 @@ export function DetectionCard({ detection, videoId, youtubeVideoId }: { detectio
             {detection.evidence.map((e) => (
               <li key={e.id} className="text-xs text-slate-500">
                 <span className="font-medium text-slate-600">
-                  [{e.source}
+                  [{describeEvidenceSource(e.source as ChunkEvidenceSource)}
                   {e.timestampSeconds !== null ? ` @${e.timestampSeconds}s` : ""}]
                 </span>{" "}
                 {e.text}
