@@ -2,7 +2,13 @@ import { getEnv } from "@/lib/env";
 import { parseIso8601Duration } from "./duration";
 import { YouTubeApiError, YouTubeNotFoundError, YouTubeQuotaExceededError } from "./errors";
 import { TtlCache } from "./cache";
-import type { YouTubeChannelResource, YouTubeVideoResource } from "./types";
+import type {
+  YouTubeChannelResource,
+  YouTubeSearchOptions,
+  YouTubeSearchPage,
+  YouTubeSearchResult,
+  YouTubeVideoResource,
+} from "./types";
 
 const CACHE_TTL_MS = 5 * 60 * 1000;
 const MAX_RETRIES = 3;
@@ -64,6 +70,7 @@ function mapChannelResource(item: Record<string, unknown>): YouTubeChannelResour
   const contentDetails = (item.contentDetails ?? {}) as Record<string, unknown>;
   const thumbnails = (snippet.thumbnails ?? {}) as Record<string, { url?: string }>;
   const relatedPlaylists = (contentDetails.relatedPlaylists ?? {}) as Record<string, unknown>;
+  const topicDetails = (item.topicDetails ?? {}) as Record<string, unknown>;
 
   return {
     id: String(item.id),
@@ -75,6 +82,9 @@ function mapChannelResource(item: Record<string, unknown>): YouTubeChannelResour
     hiddenSubscriberCount: Boolean(statistics.hiddenSubscriberCount),
     videoCount: statistics.videoCount ? Number(statistics.videoCount) : null,
     uploadsPlaylistId: typeof relatedPlaylists.uploads === "string" ? relatedPlaylists.uploads : null,
+    topicCategories: Array.isArray(topicDetails.topicCategories)
+      ? (topicDetails.topicCategories as string[])
+      : [],
   };
 }
 
@@ -104,7 +114,7 @@ function mapVideoResource(item: Record<string, unknown>): YouTubeVideoResource {
 const channelCache = new TtlCache<YouTubeChannelResource>(CACHE_TTL_MS);
 const videoCache = new TtlCache<YouTubeVideoResource>(CACHE_TTL_MS);
 
-const CHANNEL_PARTS = "snippet,statistics,contentDetails";
+const CHANNEL_PARTS = "snippet,statistics,contentDetails,topicDetails";
 const VIDEO_PARTS = "snippet,statistics,contentDetails,paidProductPlacementDetails";
 
 /**
@@ -220,6 +230,53 @@ export class YouTubeClient {
     const videos = await this.getVideosByIds([videoId]);
     if (!videos.length) throw new YouTubeNotFoundError("That YouTube video");
     return videos[0];
+  }
+
+  /**
+   * search.list — the ONLY expensive call in this client (100 quota units per page,
+   * vs 1 for everything else). Callers MUST reserve quota against the QuotaLedger
+   * BEFORE invoking this (see src/lib/discovery/quota.ts); this method never does it
+   * for them, so the reservation stays transactional with the caller's job context.
+   * Responses are deliberately not cached: churn in results is the point of search.
+   */
+  async searchCreators(query: string, options: YouTubeSearchOptions): Promise<YouTubeSearchPage> {
+    const params: Record<string, string> = {
+      part: "snippet",
+      q: query,
+      type: options.searchType,
+      maxResults: String(Math.min(50, options.maxResults ?? 50)),
+    };
+    if (options.regionCode) params.regionCode = options.regionCode;
+    if (options.relevanceLanguage) params.relevanceLanguage = options.relevanceLanguage;
+    if (options.publishedAfter) params.publishedAfter = options.publishedAfter.toISOString();
+    if (options.pageToken) params.pageToken = options.pageToken;
+
+    const data = (await requestWithRetry("search", params)) as {
+      items?: Array<{
+        id?: { channelId?: string; videoId?: string };
+        snippet?: { channelId?: string; channelTitle?: string; title?: string };
+      }>;
+      nextPageToken?: string;
+      pageInfo?: { totalResults?: number };
+    };
+
+    const results: YouTubeSearchResult[] = [];
+    for (const item of data.items ?? []) {
+      const channelId = options.searchType === "channel" ? item.id?.channelId : item.snippet?.channelId;
+      if (!channelId) continue;
+      results.push({
+        channelId,
+        channelTitle: item.snippet?.channelTitle ?? item.snippet?.title ?? "",
+        videoId: options.searchType === "video" ? (item.id?.videoId ?? null) : null,
+        videoTitle: options.searchType === "video" ? (item.snippet?.title ?? null) : null,
+      });
+    }
+
+    return {
+      results,
+      nextPageToken: data.nextPageToken ?? null,
+      totalResults: data.pageInfo?.totalResults ?? null,
+    };
   }
 }
 

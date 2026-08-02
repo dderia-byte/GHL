@@ -13,6 +13,9 @@ const envSchema = z.object({
   APP_URL: z.string().optional().default("http://localhost:3000"),
   TRANSCRIPT_PROVIDER: z.enum(["manual", "uploaded_file", "mock"]).optional().default("manual"),
   VIDEO_ANALYSIS_PROVIDER: z.enum(["gemini", "mock"]).optional().default("gemini"),
+  /// Creator-discovery search. "youtube" needs YOUTUBE_API_KEY (and falls back to
+  /// mock without one, matching the other providers' keyless-fallback convention).
+  DISCOVERY_SEARCH_PROVIDER: z.enum(["youtube", "mock"]).optional().default("youtube"),
   DEFAULT_ANALYSIS_MODE: z.enum(["FIRST_SPONSOR_ONLY", "ALL_SPONSORS"]).optional().default("FIRST_SPONSOR_ONLY"),
   DEFAULT_CHUNK_SECONDS: z.coerce.number().int().positive().optional().default(60),
   MAX_UPLOAD_SIZE_MB: z.coerce.number().int().positive().optional().default(250),
