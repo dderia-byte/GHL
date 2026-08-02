@@ -176,6 +176,12 @@ export default async function DashboardPage() {
             <LinkButton href="/api/export/all" variant="secondary">
               Export all detections (CSV)
             </LinkButton>
+            <LinkButton href="/api/export/targets/creators" variant="secondary">
+              Export creator targets (CSV)
+            </LinkButton>
+            <LinkButton href="/api/export/targets/brands" variant="secondary">
+              Export brand targets (CSV)
+            </LinkButton>
           </div>
         </Card>
       </div>

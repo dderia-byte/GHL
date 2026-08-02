@@ -1,8 +1,9 @@
 import Link from "next/link";
-import { Users } from "lucide-react";
+import { Download, Users } from "lucide-react";
 import { listDiscoveredCreators, type CreatorTab } from "@/lib/discovery/queries";
 import { PageHeader, Card, EmptyState } from "@/components/ui/card";
 import { CandidateStateBadge } from "@/components/ui/badge";
+import { LinkButton } from "@/components/ui/button";
 import { formatRelativeTime } from "@/lib/format";
 
 export const dynamic = "force-dynamic";
@@ -26,6 +27,16 @@ export default async function DiscoveredCreatorsPage(props: {
       <PageHeader
         title="Discovered creators"
         description="Creators the discovery engine has found, qualified, or rejected — every decision recorded."
+        actions={
+          <div className="flex flex-wrap gap-2">
+            <LinkButton href="/api/export/targets/creators" variant="secondary">
+              <Download className="size-4" /> Creator targets CSV
+            </LinkButton>
+            <LinkButton href="/api/export/targets/brands" variant="secondary">
+              <Download className="size-4" /> Brand targets CSV
+            </LinkButton>
+          </div>
+        }
       />
 
       <div className="flex gap-1 border-b border-border">
