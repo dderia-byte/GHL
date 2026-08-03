@@ -17,6 +17,8 @@ export default async function SettingsPage() {
     perRunCostLimitUsd: await getSetting("budgets.perRunCostLimitUsd"),
     dailyQuotaUnits: await getSetting("budgets.dailyQuotaUnits"),
     maxCreatorsPerRun: await getSetting("discovery.maxCreatorsPerRun"),
+    maxPagesPerQuery: await getSetting("discovery.maxPagesPerQuery"),
+    maxGatingPaidVideos: await getSetting("discovery.maxGatingPaidVideos"),
     deepScanVideoCount: await getSetting("discovery.deepScanVideoCount"),
     maxSubscribers: await getSetting("discovery.maxSubscribers"),
     maxVideoAgeDays: await getSetting("discovery.maxVideoAgeDays"),

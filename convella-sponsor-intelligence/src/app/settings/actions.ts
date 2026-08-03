@@ -25,6 +25,8 @@ export async function saveDiscoverySettingsAction(
     await setSetting("budgets.perRunCostLimitUsd", data.perRunCostLimitUsd);
     await setSetting("budgets.dailyQuotaUnits", data.dailyQuotaUnits);
     await setSetting("discovery.maxCreatorsPerRun", data.maxCreatorsPerRun);
+    await setSetting("discovery.maxPagesPerQuery", data.maxPagesPerQuery);
+    await setSetting("discovery.maxGatingPaidVideos", data.maxGatingPaidVideos);
     await setSetting("discovery.deepScanVideoCount", data.deepScanVideoCount);
     await setSetting("discovery.maxSubscribers", data.maxSubscribers);
     await setSetting("discovery.maxVideoAgeDays", data.maxVideoAgeDays);

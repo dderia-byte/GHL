@@ -33,7 +33,8 @@ describe("resolveSettingValue", () => {
   });
 
   it("rejects an env fallback beyond the hard bound and uses the default", () => {
-    expect(resolveSettingValue("discovery.maxPagesPerQuery", undefined, "99")).toBe(1);
+    // 99 exceeds max(10), so the env value is discarded and the default (2) wins.
+    expect(resolveSettingValue("discovery.maxPagesPerQuery", undefined, "99")).toBe(2);
   });
 
   it("coerces boolean env values", () => {

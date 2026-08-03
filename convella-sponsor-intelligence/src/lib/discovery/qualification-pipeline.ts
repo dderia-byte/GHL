@@ -9,7 +9,7 @@ import { runSponsorAnalysisPipeline } from "@/lib/sponsor-analysis/pipeline";
 import { requeueJobWithoutAttempt } from "@/lib/jobs/queue";
 import type { DiscoverySettingsSnapshot } from "@/lib/settings";
 import { evaluateActivity } from "./filters";
-import { detectPromotionalSignals } from "./signals";
+import { runFreeGate, type GatingDecision, type GatingVideoInput } from "./gating";
 import { canSpend, getDaySpendUsd, getWorstCasePerVideoCost, decimalToNumber } from "./budgets";
 import { QUOTA_COST, QuotaExhaustedError, commitQuota, releaseQuota, reserveQuota } from "./quota";
 import { finalizeRunIfDone, parseSettingsSnapshot } from "./service";
@@ -60,67 +60,83 @@ export async function processCreatorQualificationJob(jobId: string, candidateId:
         continue;
       }
 
+      // The FREE gate: deterministically scan EVERY recent video's description and
+      // metadata (zero model calls, zero cost) before spending anything. Creators
+      // sponsor intermittently, so gating on the newest upload alone rejects good
+      // creators whose latest video simply happens to be unsponsored.
       case "ANALYSING_NEWEST": {
-        const result = await analyseCandidateVideo(jobId, candidateId, 0, settings);
-        if (result.yielded) return;
-        if (result.status === "SPONSOR_FOUND") {
+        const gate = await runFreeGateForCandidate(candidateId);
+
+        if (gate.freeQualifyingIndex !== null) {
+          await recordAudit({
+            actorType: "worker",
+            action: "discovery.candidate.free_gate_qualified",
+            entityType: "DiscoveryCandidate",
+            entityId: candidateId,
+            detail: {
+              videoIndex: gate.freeQualifyingIndex,
+              brand: gate.freeQualifyingBrand,
+              note: "Qualified from description analysis alone — no model calls.",
+            },
+          });
           state = await transition(candidateId, "ANALYSING_NEWEST", "QUALIFIED");
-        } else {
-          if (result.status === "HUMAN_REVIEW_REQUIRED") {
-            await prisma.discoveryCandidate.update({ where: { id: candidateId }, data: { borderline: true } });
-          }
-          state = await transition(candidateId, "ANALYSING_NEWEST", "CHECKING_SIGNALS");
+          continue;
         }
-        continue;
-      }
 
-      case "CHECKING_SIGNALS": {
-        const fresh = await prisma.discoveryCandidate.findUniqueOrThrow({ where: { id: candidateId } });
-        const newestVideoId = fresh.deepScanVideoIds[0];
-        const newest = newestVideoId
-          ? await prisma.video.findUnique({ where: { id: newestVideoId } })
-          : null;
-        const signals = detectPromotionalSignals({
-          description: newest?.description ?? "",
-          paidProductPlacement: newest?.paidProductPlacement ?? false,
-        });
-        await prisma.discoveryCandidate.update({
-          where: { id: candidateId },
-          data: { promotionalSignals: JSON.parse(JSON.stringify(signals)) },
-        });
-
-        if (!signals.hasPromotionalSignals) {
-          await rejectCandidate(candidateId, "CHECKING_SIGNALS", "REJECTED_NOT_COMMERCIAL", settings);
+        if (gate.paidOrder.length === 0) {
+          // Nothing commercial anywhere in the scanned window — reject without ever
+          // paying for an analysis.
+          await rejectCandidate(candidateId, "ANALYSING_NEWEST", "REJECTED_NOT_COMMERCIAL", settings);
           await completeJob(jobId);
           await finalizeRunIfDone(run.id);
           return;
         }
-        state = await transition(candidateId, "CHECKING_SIGNALS", "ANALYSING_SECOND");
+
+        state = await transition(candidateId, "ANALYSING_NEWEST", "CHECKING_SIGNALS");
         continue;
       }
 
+      // Paid gating: analyse the most promising signal-bearing videos (best-first),
+      // up to the configured budget, before deciding.
+      case "CHECKING_SIGNALS":
       case "ANALYSING_SECOND": {
         const fresh = await prisma.discoveryCandidate.findUniqueOrThrow({ where: { id: candidateId } });
-        if (fresh.deepScanVideoIds.length < 2) {
-          await rejectCandidate(candidateId, "ANALYSING_SECOND", "REJECTED_NO_SPONSOR", settings);
-          await completeJob(jobId);
-          await finalizeRunIfDone(run.id);
-          return;
+        const gate = readGatingDecision(fresh.promotionalSignals);
+        const budget = Math.min(gate.paidOrder.length, settings.maxGatingPaidVideos);
+
+        if (state === "CHECKING_SIGNALS") {
+          state = await transition(candidateId, "CHECKING_SIGNALS", "ANALYSING_SECOND");
         }
-        const result = await analyseCandidateVideo(jobId, candidateId, 1, settings);
-        if (result.yielded) return;
-        if (result.status === "SPONSOR_FOUND") {
-          state = await transition(candidateId, "ANALYSING_SECOND", "QUALIFIED");
-        } else {
+
+        let qualified = false;
+        for (let attempt = fresh.gatingCursor; attempt < budget; attempt += 1) {
+          const videoIndex = gate.paidOrder[attempt];
+          const result = await analyseCandidateVideo(jobId, candidateId, videoIndex, settings);
+          if (result.yielded) return;
+
+          await prisma.discoveryCandidate.update({
+            where: { id: candidateId },
+            data: { gatingCursor: attempt + 1 },
+          });
+
+          if (result.status === "SPONSOR_FOUND") {
+            qualified = true;
+            break;
+          }
           if (result.status === "HUMAN_REVIEW_REQUIRED") {
             await prisma.discoveryCandidate.update({ where: { id: candidateId }, data: { borderline: true } });
           }
-          await rejectCandidate(candidateId, "ANALYSING_SECOND", "REJECTED_NO_SPONSOR", settings);
-          await completeJob(jobId);
-          await finalizeRunIfDone(run.id);
-          return;
         }
-        continue;
+
+        if (qualified) {
+          state = await transition(candidateId, "ANALYSING_SECOND", "QUALIFIED");
+          continue;
+        }
+
+        await rejectCandidate(candidateId, "ANALYSING_SECOND", "REJECTED_NO_SPONSOR", settings);
+        await completeJob(jobId);
+        await finalizeRunIfDone(run.id);
+        return;
       }
 
       case "QUALIFIED": {
@@ -199,6 +215,54 @@ export async function processCreatorQualificationJob(jobId: string, candidateId:
       }
     }
   }
+}
+
+/**
+ * Runs the free gate across the candidate's imported videos and persists the result
+ * (including the per-video signal breakdown) so the paid phase — and any human
+ * reviewing the rejection later — can see exactly what was found where.
+ */
+async function runFreeGateForCandidate(candidateId: string): Promise<GatingDecision> {
+  const candidate = await prisma.discoveryCandidate.findUniqueOrThrow({ where: { id: candidateId } });
+  const videos = await prisma.video.findMany({
+    where: { id: { in: candidate.deepScanVideoIds } },
+    select: { id: true, title: true, description: true, tags: true, paidProductPlacement: true },
+  });
+  const byId = new Map(videos.map((v) => [v.id, v]));
+
+  const inputs: GatingVideoInput[] = candidate.deepScanVideoIds
+    .map((videoId, index) => {
+      const video = byId.get(videoId);
+      if (!video) return null;
+      return {
+        index,
+        title: video.title,
+        description: video.description,
+        tags: video.tags,
+        paidProductPlacement: video.paidProductPlacement,
+      };
+    })
+    .filter((v): v is GatingVideoInput => v !== null);
+
+  const decision = runFreeGate(inputs);
+  await prisma.discoveryCandidate.update({
+    where: { id: candidateId },
+    data: { promotionalSignals: JSON.parse(JSON.stringify(decision)) },
+  });
+  return decision;
+}
+
+/** Reads back the persisted gate decision (resume-safe after a crash or halt). */
+function readGatingDecision(raw: unknown): GatingDecision {
+  const empty: GatingDecision = { freeQualifyingIndex: null, freeQualifyingBrand: null, paidOrder: [], perVideo: [] };
+  if (!raw || typeof raw !== "object") return empty;
+  const parsed = raw as Partial<GatingDecision>;
+  return {
+    freeQualifyingIndex: parsed.freeQualifyingIndex ?? null,
+    freeQualifyingBrand: parsed.freeQualifyingBrand ?? null,
+    paidOrder: Array.isArray(parsed.paidOrder) ? parsed.paidOrder : [],
+    perVideo: Array.isArray(parsed.perVideo) ? parsed.perVideo : [],
+  };
 }
 
 /** Optimistic state transition — fails loudly if another writer moved the candidate first. */

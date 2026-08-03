@@ -72,10 +72,19 @@ export const SETTING_DEFINITIONS = {
   }),
   "discovery.maxPagesPerQuery": def({
     key: "discovery.maxPagesPerQuery",
-    schema: z.number().int().min(1).max(5),
-    defaultValue: 1,
+    schema: z.number().int().min(1).max(10),
+    defaultValue: 2,
     envFallback: "DISCOVERY_MAX_PAGES_PER_QUERY",
-    description: "search.list pages per query per run (each page costs 100 quota units).",
+    description:
+      "search.list pages per query per run (each page = up to 50 results but far fewer unique channels, and costs 100 quota units).",
+  }),
+  "discovery.maxGatingPaidVideos": def({
+    key: "discovery.maxGatingPaidVideos",
+    schema: z.number().int().min(0).max(5),
+    defaultValue: 2,
+    envFallback: "DISCOVERY_MAX_GATING_PAID_VIDEOS",
+    description:
+      "How many signal-bearing videos may be analysed (paid) to qualify a creator after the free description gate finds no outright disclosure.",
   }),
   "discovery.minIntervalHours": def({
     key: "discovery.minIntervalHours",
@@ -122,6 +131,7 @@ export interface DiscoverySettingsSnapshot {
   maxVideoAgeDays: number;
   rejectionCooldownDays: number;
   maxPagesPerQuery: number;
+  maxGatingPaidVideos: number;
   minIntervalHours: number;
   dailyCostLimitUsd: number;
   perRunCostLimitUsd: number;

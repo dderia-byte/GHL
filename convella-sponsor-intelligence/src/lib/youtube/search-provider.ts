@@ -42,12 +42,13 @@ class RealYouTubeSearchProvider implements YouTubeSearchProvider {
 // in keyless demos.
 // ---------------------------------------------------------------------------
 
-type MockArchetype = "alpha" | "beta" | "overlap" | "giant";
+type MockArchetype = "alpha" | "beta" | "overlap" | "giant" | "buried";
 
 function archetypeOf(channelId: string): MockArchetype {
   if (channelId.includes("-beta")) return "beta";
   if (channelId.includes("overlap")) return "overlap";
   if (channelId.includes("-giant")) return "giant";
+  if (channelId.includes("-buried")) return "buried";
   return "alpha";
 }
 
@@ -132,6 +133,17 @@ function mockUploads(channelId: string, count: number): YouTubeVideoResource[] {
           durationSeconds: 480,
         }),
       );
+    } else if (archetype === "buried" && i === 3) {
+      // The realistic case: a creator who takes sponsorships but whose most recent
+      // uploads happen to be unsponsored. Gating on the newest video alone would
+      // wrongly reject them; the free description gate finds this one for $0.
+      videos.push(
+        mockVideo(channelId, i, {
+          title: "The tool that changed my workflow (fictional demo)",
+          description: sponsoredDescription("Deepcurrent", "deepcurrent.example.com"),
+          durationSeconds: 700,
+        }),
+      );
     } else {
       videos.push(mockVideo(channelId, i, {}));
     }
@@ -164,6 +176,12 @@ export class MockYouTubeSearchProvider implements YouTubeSearchProvider {
         channelTitle: `Fictional Mega Creator (${query})`,
         videoId: `mockvid-${slug}-g`,
         videoTitle: `Fictional viral video about ${query}`,
+      },
+      {
+        channelId: `UCmock-${slug}-buried`,
+        channelTitle: `Fictional Buried-Sponsor Creator (${query})`,
+        videoId: `mockvid-${slug}-bu`,
+        videoTitle: `Fictional older-sponsor video about ${query}`,
       },
       {
         channelId: "UCmock-shared-overlap",

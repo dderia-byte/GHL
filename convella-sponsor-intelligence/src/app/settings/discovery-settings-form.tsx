@@ -12,6 +12,8 @@ export interface DiscoverySettingsFormValues {
   perRunCostLimitUsd: number;
   dailyQuotaUnits: number;
   maxCreatorsPerRun: number;
+  maxPagesPerQuery: number;
+  maxGatingPaidVideos: number;
   deepScanVideoCount: number;
   maxSubscribers: number;
   maxVideoAgeDays: number;
@@ -22,8 +24,18 @@ const FIELDS: { name: keyof DiscoverySettingsFormValues; label: string; hint?: s
   { name: "dailyCostLimitUsd", label: "Daily cost limit (USD)", hint: "Hard ceiling across ALL runs per UTC day", step: "0.01" },
   { name: "perRunCostLimitUsd", label: "Per-run cost limit (USD)", hint: "A single run halts (resumably) at this spend", step: "0.01" },
   { name: "dailyQuotaUnits", label: "Daily YouTube quota budget (units)", hint: "Each search page costs 100 units" },
-  { name: "maxCreatorsPerRun", label: "Max creators per run", hint: "1–100" },
-  { name: "deepScanVideoCount", label: "Videos analysed after qualification", hint: "1–10" },
+  { name: "maxCreatorsPerRun", label: "Max creators per run", hint: "1–100 — raise this to find more creators per run" },
+  {
+    name: "maxPagesPerQuery",
+    label: "Search pages per query",
+    hint: "1–10. Each page = up to 50 results (far fewer unique channels) and costs 100 quota units. Raise for more creators.",
+  },
+  {
+    name: "maxGatingPaidVideos",
+    label: "Paid videos per qualification attempt",
+    hint: "0–5. Videos analysed to qualify a creator when the free description scan finds no outright disclosure. 0 = free-gate only (zero cost).",
+  },
+  { name: "deepScanVideoCount", label: "Videos scanned per creator", hint: "1–10 — also the size of the free description gate" },
   { name: "maxSubscribers", label: "Subscriber cap", hint: "Channels above this are filtered out" },
   { name: "maxVideoAgeDays", label: "Max age of newest upload (days)", hint: "Older channels are rejected as inactive" },
   { name: "rejectionCooldownDays", label: "Rejection cooldown (days)", hint: "Rejected channels can be re-discovered after this" },

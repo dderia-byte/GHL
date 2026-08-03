@@ -78,6 +78,7 @@ export async function buildDiscoverySettingsSnapshot(): Promise<DiscoverySetting
     maxVideoAgeDays: await getSetting("discovery.maxVideoAgeDays"),
     rejectionCooldownDays: await getSetting("discovery.rejectionCooldownDays"),
     maxPagesPerQuery: await getSetting("discovery.maxPagesPerQuery"),
+    maxGatingPaidVideos: await getSetting("discovery.maxGatingPaidVideos"),
     minIntervalHours: await getSetting("discovery.minIntervalHours"),
     dailyCostLimitUsd: await getSetting("budgets.dailyCostLimitUsd"),
     perRunCostLimitUsd: await getSetting("budgets.perRunCostLimitUsd"),
