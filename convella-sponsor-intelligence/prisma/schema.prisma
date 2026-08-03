@@ -159,6 +159,7 @@ model Channel {
   analysisJobs         AnalysisJob[]
   creatorOpportunities CreatorOpportunity[]
   discoveryCandidates  DiscoveryCandidate[]
+  profile              CreatorProfile?
 
   @@index([handle])
 }
@@ -219,6 +220,79 @@ model Video {
 
   @@index([channelId])
   @@index([analysisStatus])
+}
+
+/// Derived, evidence-based performance and content intelligence for one creator.
+/// Every field is COMPUTED from stored videos/detections — nothing here is guessed, and
+/// anything that cannot be computed stays null ("unknown") rather than being invented.
+/// Rebuilt by src/lib/creator-profile/build.ts; `computedAt` records data freshness.
+model CreatorProfile {
+  id        String  @id @default(cuid())
+  channelId String  @unique
+  channel   Channel @relation(fields: [channelId], references: [id], onDelete: Cascade)
+
+  // --- Format split (Shorts are never treated as long-form performance) -------
+  longFormVideoCount Int @default(0)
+  shortsVideoCount   Int @default(0)
+  /// Share of analysed uploads that are Shorts (0–1). High values mean long-form
+  /// sponsorship performance cannot be inferred from headline view counts.
+  shortsRatio        Float?
+
+  // --- Long-form performance (the only basis for sponsorship expectations) ----
+  avgViewsLast10  Float?
+  avgViewsLast25  Float?
+  medianViewsLast25 Float?
+  highestRecentViews Int?
+  lowestRecentViews  Int?
+  /// Median long-form views ÷ subscribers. Very low values suggest inflated or
+  /// disengaged subscriber counts.
+  viewsPerSubscriber Float?
+
+  // --- Engagement -------------------------------------------------------------
+  avgLikes    Float?
+  avgComments Float?
+  /// (likes + comments) ÷ views across long-form uploads.
+  engagementRate Float?
+
+  // --- Cadence and trend ------------------------------------------------------
+  /// Long-form uploads per month over the observed window.
+  uploadsPerMonth Float?
+  daysSinceLastUpload Int?
+  /// Newer-half median views ÷ older-half median views. >1 rising, <1 declining.
+  viewTrendRatio Float?
+  /// 0–1; 1 = perfectly regular upload spacing.
+  uploadConsistency Float?
+
+  // --- Commercial activity ----------------------------------------------------
+  /// Share of analysed long-form videos carrying a counted sponsorship (0–1).
+  sponsorshipFrequency Float?
+  sponsoredVideoCount  Int   @default(0)
+  distinctSponsorCount Int   @default(0)
+  /// Brands that sponsored more than one video — the strongest commercial signal.
+  repeatSponsorCount   Int   @default(0)
+  lastSponsorshipAt    DateTime?
+
+  // --- Contact routes (extracted from public channel/video descriptions) ------
+  businessEmail String?
+  website       String?
+  socialLinks   Json?
+
+  // --- Content intelligence (weighted, never single-category) -----------------
+  primaryNiche    String?
+  secondaryNiche  String?
+  /// [{ category, weight, evidence[] }] — weights sum to ~1.
+  nicheWeights    Json?
+  recurringTopics String[] @default([])
+  /// "beginner" | "intermediate" | "advanced" | null when unknown.
+  technicalDepth  String?
+
+  /// How much of the profile could actually be computed (0–1) — feeds confidence.
+  profileCompleteness Float?
+  videosConsidered    Int   @default(0)
+  computedAt          DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  @@index([channelId])
 }
 
 model TranscriptSegment {
