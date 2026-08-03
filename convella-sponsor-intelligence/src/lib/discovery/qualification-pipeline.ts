@@ -9,6 +9,7 @@ import { runSponsorAnalysisPipeline } from "@/lib/sponsor-analysis/pipeline";
 import { requeueJobWithoutAttempt } from "@/lib/jobs/queue";
 import type { DiscoverySettingsSnapshot } from "@/lib/settings";
 import { evaluateActivity } from "./filters";
+import { buildCreatorProfile } from "@/lib/creator-profile/build";
 import { runFreeGate, type GatingDecision, type GatingVideoInput } from "./gating";
 import { canSpend, getDaySpendUsd, getWorstCasePerVideoCost, decimalToNumber } from "./budgets";
 import { QUOTA_COST, QuotaExhaustedError, commitQuota, releaseQuota, reserveQuota } from "./quota";
@@ -183,6 +184,14 @@ export async function processCreatorQualificationJob(jobId: string, candidateId:
           if (result.yielded) return;
           cursor += 1;
           await prisma.discoveryCandidate.update({ where: { id: candidateId }, data: { deepScanCursor: cursor } });
+        }
+
+        // Rebuild the creator's derived intelligence now that all their videos are
+        // analysed — profiles must never lag behind the evidence that feeds scoring.
+        if (fresh.channelId) {
+          await buildCreatorProfile(fresh.channelId).catch((error) => {
+            console.error(`[discovery] profile build failed for channel ${fresh.channelId}`, error);
+          });
         }
 
         await transition(candidateId, "DEEP_SCANNING", "COMPLETED");

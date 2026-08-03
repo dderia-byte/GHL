@@ -160,6 +160,9 @@ model Channel {
   creatorOpportunities CreatorOpportunity[]
   discoveryCandidates  DiscoveryCandidate[]
   profile              CreatorProfile?
+  brandMatches         CreatorBrandMatch[]
+  feedback             CreatorFeedback[]
+  outreach             CreatorOutreach[]
 
   @@index([handle])
 }
@@ -322,6 +325,9 @@ model Brand {
   sponsorshipDetections SponsorshipDetection[]
   competitorSuggestions BrandCompetitorSuggestion[]
   creatorOpportunities  CreatorOpportunity[]
+  creatorMatches        CreatorBrandMatch[]
+  feedback              CreatorFeedback[]
+  outreach              CreatorOutreach[]
 
   @@index([domain])
 }
@@ -595,6 +601,131 @@ model DiscoveryCandidate {
 /// Operator-editable runtime settings. Values are Json validated by per-key Zod
 /// schemas at read time (a malformed row falls back to the env/default, never
 /// crashes the worker). Never store secrets here — this table is operator-visible.
+enum MatchRecommendation {
+  STRONG_MATCH
+  GOOD_MATCH
+  NEEDS_MORE_RESEARCH
+  WEAK_MATCH
+  REJECT
+}
+
+enum CreatorDecision {
+  APPROVE
+  REJECT
+  NEEDS_MORE_RESEARCH
+  CONTACT_LATER
+  NOT_RELEVANT
+  TOO_EXPENSIVE
+  WEAK_VIEWS
+  WRONG_AUDIENCE
+  ALREADY_CONTACTED
+  DUPLICATE
+  GOOD_FIT
+}
+
+enum OutreachStatus {
+  NOT_CONTACTED
+  CONTACTED
+  REPLIED
+  IN_DISCUSSION
+  NEGOTIATING
+  WON
+  LOST
+  DECLINED
+}
+
+/// A scored creator↔brand pairing. Both scores are stored: `matchScore` is how
+/// suitable the creator is, `confidenceScore` is how far the evidence can be trusted.
+/// Components and signals are persisted so any recommendation can be defended months
+/// later with the exact numbers that produced it.
+model CreatorBrandMatch {
+  id        String  @id @default(cuid())
+  channelId String
+  channel   Channel @relation(fields: [channelId], references: [id], onDelete: Cascade)
+  brandId   String
+  brand     Brand   @relation(fields: [brandId], references: [id], onDelete: Cascade)
+
+  matchScore      Int
+  confidenceScore Int
+  recommendation  MatchRecommendation
+
+  /// ScoreComponent[] — per-dimension points, max, reason and unknown flag.
+  components Json
+  /// MatchSignal[] — positive / negative / unknown, kept separate by kind.
+  signals    Json
+  explanation String
+
+  /// Weights this result was computed under, so a re-weighting is auditable.
+  weightsUsed Json
+  /// Operator override; when set, this wins over matchScore in the UI and exports.
+  manualScore Int?
+  manualNote  String?
+
+  scoredAt  DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  decisions CreatorFeedback[]
+
+  @@unique([channelId, brandId])
+  @@index([brandId, matchScore])
+  @@index([recommendation])
+}
+
+/// A human decision about a creator (optionally for a specific brand), captured with
+/// the scores and evidence AS THEY WERE at decision time. This is the training signal
+/// for measuring and improving accuracy — never overwritten, always appended.
+model CreatorFeedback {
+  id        String  @id @default(cuid())
+  channelId String
+  channel   Channel @relation(fields: [channelId], references: [id], onDelete: Cascade)
+  brandId   String?
+  brand     Brand?  @relation(fields: [brandId], references: [id], onDelete: SetNull)
+  matchId   String?
+  match     CreatorBrandMatch? @relation(fields: [matchId], references: [id], onDelete: SetNull)
+
+  decision CreatorDecision
+  reason   String?
+  /// The operator's own 0–100 assessment, for human-vs-system comparison.
+  humanScore Int?
+
+  // Snapshot at decision time — the system's own scores must not be retro-edited.
+  matchScoreAtDecision      Int?
+  confidenceScoreAtDecision Int?
+  signalsAtDecision         Json?
+
+  decidedBy String?
+  createdAt DateTime @default(now())
+
+  @@index([channelId])
+  @@index([brandId])
+  @@index([decision, createdAt])
+}
+
+/// Outreach pipeline state for a creator↔brand pairing — turns intelligence into a
+/// workflow (contacted → replied → quoted → won/lost).
+model CreatorOutreach {
+  id        String  @id @default(cuid())
+  channelId String
+  channel   Channel @relation(fields: [channelId], references: [id], onDelete: Cascade)
+  brandId   String
+  brand     Brand   @relation(fields: [brandId], references: [id], onDelete: Cascade)
+
+  status        OutreachStatus @default(NOT_CONTACTED)
+  contactedAt   DateTime?
+  repliedAt     DateTime?
+  nextFollowUpAt DateTime?
+  quotedRateUsd Decimal?       @db.Decimal(10, 2)
+  agreedRateUsd Decimal?       @db.Decimal(10, 2)
+  owner         String?
+  notes         String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([channelId, brandId])
+  @@index([status])
+}
+
 model AppSetting {
   key       String   @id
   value     Json

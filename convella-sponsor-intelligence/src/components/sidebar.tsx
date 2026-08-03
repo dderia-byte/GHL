@@ -16,6 +16,7 @@ import {
   Radar,
   Search,
   Users,
+  Target,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 
@@ -25,6 +26,7 @@ export const NAV_ITEMS: { href: string; label: string; icon: LucideIcon }[] = [
   { href: "/discovery", label: "Discovery", icon: Radar },
   { href: "/discovery/queries", label: "Search queries", icon: Search },
   { href: "/discovery/creators", label: "Discovered creators", icon: Users },
+  { href: "/matches", label: "Brand matches", icon: Target },
   { href: "/brands", label: "Brands", icon: Building2 },
   { href: "/review", label: "Review queue", icon: ClipboardCheck },
   { href: "/jobs", label: "Analysis jobs", icon: ListChecks },
