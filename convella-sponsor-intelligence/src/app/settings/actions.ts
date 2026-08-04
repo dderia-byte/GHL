@@ -31,6 +31,7 @@ export async function saveDiscoverySettingsAction(
     await setSetting("discovery.maxSubscribers", data.maxSubscribers);
     await setSetting("discovery.maxVideoAgeDays", data.maxVideoAgeDays);
     await setSetting("discovery.rejectionCooldownDays", data.rejectionCooldownDays);
+    await setSetting("discovery.includePreviouslySeenCreators", data.includePreviouslySeenCreators);
   } catch (error) {
     return { error: error instanceof Error ? error.message : "Could not save settings." };
   }

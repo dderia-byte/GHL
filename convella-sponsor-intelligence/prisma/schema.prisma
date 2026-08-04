@@ -609,6 +609,11 @@ model DiscoveryCandidate {
   deepScanCursor   Int      @default(0)
   /// Unique confirmed external paid sponsors found so far (max 2).
   uniqueSponsors   String[] @default([])
+  /// True when this channel was ALREADY known (in the database, or rejected by an
+  /// earlier run) at the moment this candidate was created. Surfaced as the CSV's
+  /// "Duplicate" column so previously-seen creators can be included in a run and
+  /// filtered by hand rather than silently dropped.
+  previouslySeen   Boolean  @default(false)
   /// How many paid gating analyses have been attempted (resume cursor into the free
   /// gate's ranked paidOrder), so a halt/crash mid-gating never re-pays for a video.
   gatingCursor     Int      @default(0)

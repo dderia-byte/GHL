@@ -154,10 +154,23 @@ export async function processDiscoveryRunJob(jobId: string, discoveryRunId: stri
 
   const duplicateFiltered: Array<{ channel: DiscoveredChannel; reason: RejectionReason }> = [];
   const toHydrate: DiscoveredChannel[] = [];
+  // Channels seen before. When includePreviouslySeenCreators is on they are analysed
+  // anyway and tagged, so nobody is silently dropped on the strength of an older
+  // run's judgement — the operator filters them in the CSV instead.
+  const previouslySeenIds = new Set<string>();
+
   for (const channel of discovered.values()) {
-    if (knownSet.has(channel.youtubeChannelId)) duplicateFiltered.push({ channel, reason: "DUPLICATE_KNOWN" });
-    else if (cooldownSet.has(channel.youtubeChannelId)) duplicateFiltered.push({ channel, reason: "DUPLICATE_REJECTED" });
-    else toHydrate.push(channel);
+    const isKnown = knownSet.has(channel.youtubeChannelId);
+    const isCooldown = cooldownSet.has(channel.youtubeChannelId);
+
+    if (isKnown || isCooldown) {
+      previouslySeenIds.add(channel.youtubeChannelId);
+      if (!settings.includePreviouslySeenCreators) {
+        duplicateFiltered.push({ channel, reason: isKnown ? "DUPLICATE_KNOWN" : "DUPLICATE_REJECTED" });
+        continue;
+      }
+    }
+    toHydrate.push(channel);
   }
 
   // --- Hydration (batched; mock provider supplies fixtures keylessly) -----------
@@ -281,6 +294,7 @@ export async function processDiscoveryRunJob(jobId: string, discoveryRunId: stri
         channelTitle: resource.title,
         channelId: channelRow.id,
         state: "PENDING_ANALYSIS",
+        previouslySeen: previouslySeenIds.has(channelRef.youtubeChannelId),
         nicheDecision: outcome.nicheDecision ? JSON.parse(JSON.stringify(outcome.nicheDecision)) : undefined,
         subscriberCountAtDiscovery: resource.subscriberCount !== null ? BigInt(resource.subscriberCount) : null,
       },

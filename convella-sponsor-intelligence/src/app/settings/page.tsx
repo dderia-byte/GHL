@@ -23,6 +23,7 @@ export default async function SettingsPage() {
     maxSubscribers: await getSetting("discovery.maxSubscribers"),
     maxVideoAgeDays: await getSetting("discovery.maxVideoAgeDays"),
     rejectionCooldownDays: await getSetting("discovery.rejectionCooldownDays"),
+    includePreviouslySeenCreators: await getSetting("discovery.includePreviouslySeenCreators"),
   };
 
   return (

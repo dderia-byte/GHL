@@ -22,6 +22,9 @@ export async function GET(request: Request) {
       niche: true,
       confirmedSponsorBrands: true,
       latestEligibleVideoAt: true,
+      // Any candidate flagged previouslySeen means this creator was already known
+      // before the run that surfaced them.
+      discoveryCandidates: { select: { previouslySeen: true } },
     },
   });
 
@@ -32,6 +35,7 @@ export async function GET(request: Request) {
       niche: c.niche,
       sponsorBrands: c.confirmedSponsorBrands,
       latestEligibleVideoAt: c.latestEligibleVideoAt,
+      previouslySeen: c.discoveryCandidates.some((candidate) => candidate.previouslySeen),
     })),
   );
 

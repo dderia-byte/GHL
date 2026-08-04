@@ -11,9 +11,22 @@ export interface QualifiedCreatorRecord {
   niche: string | null;
   sponsorBrands: string[];
   latestEligibleVideoAt: Date | null;
+  /**
+   * True when this creator was already in the database (or had been rejected by an
+   * earlier run) before the run that produced this row. Surfaced so nobody is
+   * silently dropped on an older run's judgement — filter the column by hand.
+   */
+  previouslySeen?: boolean;
 }
 
-const HEADERS = ["YouTuber Name", "Channel URL", "Niche", "Sponsor Brands", "Latest Video Date"];
+const HEADERS = [
+  "YouTuber Name",
+  "Channel URL",
+  "Niche",
+  "Sponsor Brands",
+  "Latest Video Date",
+  "Duplicate",
+];
 
 /** Concise primary niches. Anything unrecognised falls back to the stored label. */
 const NICHE_CANONICAL: Record<string, string> = {
@@ -71,6 +84,7 @@ export function buildQualifiedCreatorsCsv(records: QualifiedCreatorRecord[]): st
     // Max two brands — analysis stops once two unique sponsors are confirmed.
     "Sponsor Brands": record.sponsorBrands.slice(0, 2).join(" | "),
     "Latest Video Date": formatVideoDate(record.latestEligibleVideoAt),
+    Duplicate: record.previouslySeen ? "Yes" : "No",
   }));
   return toCsv(HEADERS, rows);
 }

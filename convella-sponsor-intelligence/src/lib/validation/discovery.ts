@@ -47,4 +47,8 @@ export const discoverySettingsFormSchema = z.object({
   maxSubscribers: z.coerce.number().int().min(1),
   maxVideoAgeDays: z.coerce.number().int().min(1).max(3650),
   rejectionCooldownDays: z.coerce.number().int().min(0).max(3650),
+  // HTML checkboxes submit "on" when ticked and are absent when not.
+  includePreviouslySeenCreators: z
+    .union([z.literal("on"), z.literal("true"), z.literal("false"), z.undefined()])
+    .transform((v) => v === "on" || v === "true"),
 });

@@ -77,6 +77,14 @@ export const SETTING_DEFINITIONS = {
     envFallback: "DISCOVERY_MAX_VIDEO_AGE_DAYS",
     description: "Channels whose newest upload is older than this are rejected as inactive.",
   }),
+  "discovery.includePreviouslySeenCreators": def({
+    key: "discovery.includePreviouslySeenCreators",
+    schema: z.boolean(),
+    defaultValue: false,
+    envFallback: "DISCOVERY_INCLUDE_PREVIOUSLY_SEEN",
+    description:
+      "Analyse creators already in the database or rejected by an earlier run instead of skipping them. They are tagged Duplicate=Yes in the CSV so they can be filtered by hand. Costs money: previously-rejected videos are re-analysed.",
+  }),
   "discovery.rejectionCooldownDays": def({
     key: "discovery.rejectionCooldownDays",
     schema: z.number().int().min(0).max(3650),
@@ -145,6 +153,7 @@ export interface DiscoverySettingsSnapshot {
   maxSubscribers: number;
   allowHiddenSubscriberCounts: boolean;
   maxVideoAgeDays: number;
+  includePreviouslySeenCreators: boolean;
   rejectionCooldownDays: number;
   maxPagesPerQuery: number;
   maxGatingPaidVideos: number;

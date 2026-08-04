@@ -230,9 +230,9 @@ describe("Qualified creators CSV", () => {
       },
     ]);
     const [header, row] = csv.split("\r\n");
-    expect(header).toBe("YouTuber Name,Channel URL,Niche,Sponsor Brands,Latest Video Date");
+    expect(header).toBe("YouTuber Name,Channel URL,Niche,Sponsor Brands,Latest Video Date,Duplicate");
     expect(row).toBe(
-      'Fictional Dev Creator,https://www.youtube.com/channel/UCfictional123,AI,Nimbus Notes | Aurora VPN,2026-07-28',
+      'Fictional Dev Creator,https://www.youtube.com/channel/UCfictional123,AI,Nimbus Notes | Aurora VPN,2026-07-28,No',
     );
   });
 
@@ -262,10 +262,28 @@ describe("Qualified creators CSV", () => {
     expect(qualifiedCreatorsFilename(new Date("2026-08-03T09:00:00Z"))).toBe("qualified_creators_2026-08-03.csv");
   });
 
+  it("adds a Duplicate column so previously-seen creators can be filtered by hand", () => {
+    const csv = buildQualifiedCreatorsCsv([
+      { channelName: "Fresh Find", youtubeChannelId: "UC1", niche: "AI", sponsorBrands: ["X"], latestEligibleVideoAt: null, previouslySeen: false },
+      { channelName: "Seen Before", youtubeChannelId: "UC2", niche: "AI", sponsorBrands: ["Y"], latestEligibleVideoAt: null, previouslySeen: true },
+    ]);
+    const [header, fresh, seen] = csv.split("\r\n");
+    expect(header.endsWith(",Duplicate")).toBe(true);
+    expect(fresh.endsWith(",No")).toBe(true);
+    expect(seen.endsWith(",Yes")).toBe(true);
+  });
+
+  it("defaults Duplicate to No when the flag is absent", () => {
+    const csv = buildQualifiedCreatorsCsv([
+      { channelName: "A", youtubeChannelId: "UC1", niche: "AI", sponsorBrands: ["X"], latestEligibleVideoAt: null },
+    ]);
+    expect(csv.split("\r\n")[1].endsWith(",No")).toBe(true);
+  });
+
   it("leaves the date blank rather than guessing when unknown", () => {
     const csv = buildQualifiedCreatorsCsv([
       { channelName: "A", youtubeChannelId: "UC1", niche: "AI", sponsorBrands: ["X"], latestEligibleVideoAt: null },
     ]);
-    expect(csv.split("\r\n")[1].endsWith(",")).toBe(true);
+    expect(csv.split("\r\n")[1]).toContain(",,"); // empty date cell before Duplicate
   });
 });

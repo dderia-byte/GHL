@@ -84,6 +84,7 @@ export function parseSettingsSnapshot(raw: unknown): DiscoverySettingsSnapshot {
     maxSubscribers: 800_000,
     allowHiddenSubscriberCounts: false,
     maxVideoAgeDays: 90,
+    includePreviouslySeenCreators: false,
     rejectionCooldownDays: 90,
     maxPagesPerQuery: 2,
     maxGatingPaidVideos: 2,
