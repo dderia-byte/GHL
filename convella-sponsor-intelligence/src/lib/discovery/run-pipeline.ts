@@ -7,7 +7,7 @@ import { upsertChannelRecord } from "@/lib/jobs/channel-scan-pipeline";
 import { enqueueCreatorQualificationJob } from "@/lib/jobs/queue";
 import type { RejectionReason } from "@/generated/prisma/enums";
 import { evaluateFilters } from "./filters";
-import { parseSettingsSnapshot } from "./service";
+import { finalizeRunIfDone, parseSettingsSnapshot } from "./service";
 import { QUOTA_COST, QuotaExhaustedError, commitQuota, releaseQuota, reserveQuota } from "./quota";
 
 interface DiscoveredChannel {
@@ -38,6 +38,11 @@ export async function processDiscoveryRunJob(jobId: string, discoveryRunId: stri
   });
 
   const provider = getYouTubeSearchProvider();
+  // Continuation passes resume from the stored page cursors so the run keeps finding
+  // NEW creators rather than re-paying for page one of every query.
+  const storedCursors = (run.searchCursors as { tokens?: Record<string, string | null> } | null)?.tokens ?? {};
+  const nextCursors: Record<string, string | null> = { ...storedCursors };
+
   const queries = await prisma.discoveryQuery.findMany({
     where: { enabled: true },
     orderBy: [{ priority: "asc" }, { createdAt: "asc" }],
@@ -66,7 +71,9 @@ export async function processDiscoveryRunJob(jobId: string, discoveryRunId: stri
     }
 
     const pages = Math.min(query.maxPages, settings.maxPagesPerQuery);
-    let pageToken: string | undefined;
+    // A query whose cursor is explicitly null has already been paged to the end.
+    if (Object.prototype.hasOwnProperty.call(storedCursors, query.id) && storedCursors[query.id] === null) continue;
+    let pageToken: string | undefined = storedCursors[query.id] ?? undefined;
     let resultCount = 0;
 
     for (let page = 0; page < pages; page += 1) {
@@ -111,6 +118,7 @@ export async function processDiscoveryRunJob(jobId: string, discoveryRunId: stri
           }
         }
 
+        nextCursors[query.id] = result.nextPageToken;
         if (!result.nextPageToken) break;
         pageToken = result.nextPageToken;
       } catch (error) {
@@ -188,6 +196,10 @@ export async function processDiscoveryRunJob(jobId: string, discoveryRunId: stri
   const hydratedById = new Map(hydrated.map((c) => [c.id, c]));
 
   // --- Filters + candidate creation ---------------------------------------------
+  // The per-pass cap never lets the run exceed its overall candidate ceiling.
+  const remainingCandidateBudget = Math.max(0, settings.maxCandidatesPerRun - run.candidatesAnalysed);
+  const perPassCap = Math.min(settings.maxCreatorsPerRun, remainingCandidateBudget);
+
   const queryById = new Map(queries.map((q) => [q.id, q]));
   const cooldownMs = settings.rejectionCooldownDays * 24 * 3600 * 1000;
   let candidatesCreated = 0;
@@ -245,7 +257,7 @@ export async function processDiscoveryRunJob(jobId: string, discoveryRunId: stri
       continue;
     }
 
-    if (candidatesCreated >= settings.maxCreatorsPerRun) {
+    if (candidatesCreated >= perPassCap) {
       // Over the per-run cap: not created at all — they will surface again on the
       // next run if the queries keep finding them.
       continue;
@@ -281,13 +293,18 @@ export async function processDiscoveryRunJob(jobId: string, discoveryRunId: stri
     await enqueueCreatorQualificationJob(discoveryRunId, candidateId);
   }
 
+  const searchExhausted = Object.values(nextCursors).every((token) => token === null) && Object.keys(nextCursors).length > 0;
+
   await prisma.discoveryRun.update({
     where: { id: discoveryRunId },
     data: {
-      channelsDiscovered: discovered.size,
-      candidatesCreated,
-      candidatesRejected,
+      channelsDiscovered: { increment: discovered.size },
+      candidatesCreated: { increment: candidatesCreated },
+      candidatesRejected: { increment: candidatesRejected },
+      candidatesAnalysed: { increment: candidatesCreated },
+      duplicatesSkipped: { increment: duplicateFiltered.filter((d) => d.reason === "DUPLICATE_KNOWN").length },
       quotaUnitsUsed: { increment: quotaUnitsUsed },
+      searchCursors: JSON.parse(JSON.stringify({ tokens: nextCursors, exhausted: searchExhausted })),
     },
   });
   await prisma.analysisJob.update({
@@ -302,11 +319,10 @@ export async function processDiscoveryRunJob(jobId: string, discoveryRunId: stri
     detail: { channelsDiscovered: discovered.size, candidatesCreated, candidatesRejected, quotaUnitsUsed },
   });
 
+  // No new candidates this pass: let the shared finalisation logic decide whether to
+  // search again or stop (and record the stop reason).
   if (acceptedCandidateIds.length === 0) {
-    await prisma.discoveryRun.update({
-      where: { id: discoveryRunId },
-      data: { status: "COMPLETED", completedAt: new Date() },
-    });
+    await finalizeRunIfDone(discoveryRunId);
   }
 
   async function upsertCandidate(options: {

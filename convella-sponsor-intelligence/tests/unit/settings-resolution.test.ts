@@ -7,7 +7,7 @@ describe("resolveSettingValue", () => {
   });
 
   it("falls back to the default when nothing is stored and no env is set", () => {
-    expect(resolveSettingValue("discovery.maxCreatorsPerRun", undefined, undefined)).toBe(25);
+    expect(resolveSettingValue("discovery.maxCreatorsPerRun", undefined, undefined)).toBe(40);
     expect(resolveSettingValue("budgets.dailyCostLimitUsd", undefined, undefined)).toBe(25);
   });
 
@@ -21,14 +21,14 @@ describe("resolveSettingValue", () => {
   });
 
   it("rejects a stored value beyond the hard bound and falls through", () => {
-    // 2500 exceeds the max(100) hard bound — the row is treated as absent.
-    expect(resolveSettingValue("discovery.maxCreatorsPerRun", 2500, undefined)).toBe(25);
+    // 2500 exceeds the max(200) hard bound — the row is treated as absent.
+    expect(resolveSettingValue("discovery.maxCreatorsPerRun", 2500, undefined)).toBe(40);
     // ...and the env fallback is consulted next.
     expect(resolveSettingValue("discovery.maxCreatorsPerRun", 2500, "40")).toBe(40);
   });
 
   it("rejects a malformed stored value (wrong type) and falls back", () => {
-    expect(resolveSettingValue("discovery.maxCreatorsPerRun", "lots", undefined)).toBe(25);
+    expect(resolveSettingValue("discovery.maxCreatorsPerRun", "lots", undefined)).toBe(40);
     expect(resolveSettingValue("discovery.allowHiddenSubscriberCounts", "yes", undefined)).toBe(false);
   });
 
@@ -44,12 +44,17 @@ describe("resolveSettingValue", () => {
   });
 
   it("treats an empty env string as unset", () => {
-    expect(resolveSettingValue("discovery.maxCreatorsPerRun", undefined, "")).toBe(25);
+    expect(resolveSettingValue("discovery.maxCreatorsPerRun", undefined, "")).toBe(40);
   });
 
   it("boundary: a value exactly at the hard bound passes", () => {
-    expect(resolveSettingValue("discovery.maxCreatorsPerRun", 100, undefined)).toBe(100);
+    expect(resolveSettingValue("discovery.maxCreatorsPerRun", 200, undefined)).toBe(200);
     expect(resolveSettingValue("discovery.maxPagesPerQuery", 5, undefined)).toBe(5);
+  });
+
+  it("defaults the qualified target to 30 and the candidate ceiling to 150", () => {
+    expect(resolveSettingValue("discovery.qualifiedTarget", undefined, undefined)).toBe(30);
+    expect(resolveSettingValue("discovery.maxCandidatesPerRun", undefined, undefined)).toBe(150);
   });
 
   it("every definition's default validates against its own schema", () => {

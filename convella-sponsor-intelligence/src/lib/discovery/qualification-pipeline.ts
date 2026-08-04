@@ -10,7 +10,21 @@ import { requeueJobWithoutAttempt } from "@/lib/jobs/queue";
 import type { DiscoverySettingsSnapshot } from "@/lib/settings";
 import { evaluateActivity } from "./filters";
 import { buildCreatorProfile } from "@/lib/creator-profile/build";
-import { runFreeGate, type GatingDecision, type GatingVideoInput } from "./gating";
+import { selectEligibleVideos } from "./video-eligibility";
+import {
+  MAX_VIDEOS_PER_CREATOR,
+  addUniqueSponsor,
+  countsAsExternalPaidSponsor,
+  evaluateQualification,
+} from "./sponsor-qualification";
+
+/**
+ * Uploads fetched per creator before eligibility filtering. Over-fetching means a
+ * channel that posts Shorts or streams between long-form videos still yields the
+ * five eligible videos the rules allow, without a second API round-trip.
+ */
+const UPLOAD_FETCH_COUNT = 20;
+
 import { canSpend, getDaySpendUsd, getWorstCasePerVideoCost, decimalToNumber } from "./budgets";
 import { QUOTA_COST, QuotaExhaustedError, commitQuota, releaseQuota, reserveQuota } from "./quota";
 import { finalizeRunIfDone, parseSettingsSnapshot } from "./service";
@@ -61,116 +75,58 @@ export async function processCreatorQualificationJob(jobId: string, candidateId:
         continue;
       }
 
-      // The FREE gate: deterministically scan EVERY recent video's description and
-      // metadata (zero model calls, zero cost) before spending anything. Creators
-      // sponsor intermittently, so gating on the newest upload alone rejects good
-      // creators whose latest video simply happens to be unsponsored.
-      case "ANALYSING_NEWEST": {
-        const gate = await runFreeGateForCandidate(candidateId);
-
-        if (gate.freeQualifyingIndex !== null) {
-          await recordAudit({
-            actorType: "worker",
-            action: "discovery.candidate.free_gate_qualified",
-            entityType: "DiscoveryCandidate",
-            entityId: candidateId,
-            detail: {
-              videoIndex: gate.freeQualifyingIndex,
-              brand: gate.freeQualifyingBrand,
-              note: "Qualified from description analysis alone — no model calls.",
-            },
-          });
-          state = await transition(candidateId, "ANALYSING_NEWEST", "QUALIFIED");
-          continue;
-        }
-
-        if (gate.paidOrder.length === 0) {
-          // Nothing commercial anywhere in the scanned window — reject without ever
-          // paying for an analysis.
-          await rejectCandidate(candidateId, "ANALYSING_NEWEST", "REJECTED_NOT_COMMERCIAL", settings);
-          await completeJob(jobId);
-          await finalizeRunIfDone(run.id);
-          return;
-        }
-
-        state = await transition(candidateId, "ANALYSING_NEWEST", "CHECKING_SIGNALS");
-        continue;
-      }
-
-      // Paid gating: analyse the most promising signal-bearing videos (best-first),
-      // up to the configured budget, before deciding.
+      // Sequential per-video analysis with the qualification stopping rules:
+      // stop at two unique confirmed sponsors; reject once four videos have produced
+      // none; never analyse more than five. Each video goes through the existing
+      // three-stage pipeline, which is free when the description already discloses.
+      case "ANALYSING_NEWEST":
       case "CHECKING_SIGNALS":
       case "ANALYSING_SECOND": {
-        const fresh = await prisma.discoveryCandidate.findUniqueOrThrow({ where: { id: candidateId } });
-        const gate = readGatingDecision(fresh.promotionalSignals);
-        const budget = Math.min(gate.paidOrder.length, settings.maxGatingPaidVideos);
-
-        if (state === "CHECKING_SIGNALS") {
-          state = await transition(candidateId, "CHECKING_SIGNALS", "ANALYSING_SECOND");
+        if (state !== "ANALYSING_SECOND") {
+          state = await transition(candidateId, state, "ANALYSING_SECOND");
         }
 
-        let qualified = false;
-        for (let attempt = fresh.gatingCursor; attempt < budget; attempt += 1) {
-          const videoIndex = gate.paidOrder[attempt];
-          const result = await analyseCandidateVideo(jobId, candidateId, videoIndex, settings);
-          if (result.yielded) return;
+        while (true) {
+          const fresh = await prisma.discoveryCandidate.findUniqueOrThrow({ where: { id: candidateId } });
+          const cursor = fresh.deepScanCursor;
 
-          await prisma.discoveryCandidate.update({
-            where: { id: candidateId },
-            data: { gatingCursor: attempt + 1 },
+          const verdict = evaluateQualification({
+            uniqueSponsors: fresh.uniqueSponsors,
+            videosAnalysed: cursor,
           });
-
-          if (result.status === "SPONSOR_FOUND") {
-            qualified = true;
+          if (verdict.action === "QUALIFY") {
+            state = await transition(candidateId, "ANALYSING_SECOND", "QUALIFIED");
             break;
           }
-          if (result.status === "HUMAN_REVIEW_REQUIRED") {
-            await prisma.discoveryCandidate.update({ where: { id: candidateId }, data: { borderline: true } });
+          if (verdict.action === "REJECT") {
+            await rejectCandidate(candidateId, "ANALYSING_SECOND", "REJECTED_NO_SPONSOR", settings, verdict.reason);
+            await completeJob(jobId);
+            await finalizeRunIfDone(run.id);
+            return;
           }
-        }
 
-        if (qualified) {
-          state = await transition(candidateId, "ANALYSING_SECOND", "QUALIFIED");
-          continue;
-        }
+          // Ran out of eligible videos before reaching a stopping condition.
+          if (cursor >= fresh.deepScanVideoIds.length) {
+            if (fresh.uniqueSponsors.length > 0) {
+              state = await transition(candidateId, "ANALYSING_SECOND", "QUALIFIED");
+              break;
+            }
+            await rejectCandidate(
+              candidateId,
+              "ANALYSING_SECOND",
+              "REJECTED_NO_SPONSOR",
+              settings,
+              `Only ${fresh.deepScanVideoIds.length} eligible long-form video(s) available, none sponsored.`,
+            );
+            await completeJob(jobId);
+            await finalizeRunIfDone(run.id);
+            return;
+          }
 
-        await rejectCandidate(candidateId, "ANALYSING_SECOND", "REJECTED_NO_SPONSOR", settings);
-        await completeJob(jobId);
-        await finalizeRunIfDone(run.id);
-        return;
-      }
-
-      case "QUALIFIED": {
-        await prisma.discoveryRun.update({
-          where: { id: run.id },
-          data: { creatorsQualified: { increment: 1 } },
-        });
-        await recordAudit({
-          actorType: "worker",
-          action: "discovery.candidate.qualified",
-          entityType: "DiscoveryCandidate",
-          entityId: candidateId,
-        });
-        state = await transition(candidateId, "QUALIFIED", "DEEP_SCANNING");
-        continue;
-      }
-
-      case "QUALIFIED_PARTIAL": {
-        // Resumed after a cost halt mid-deep-scan: pick the scan back up.
-        state = await transition(candidateId, "QUALIFIED_PARTIAL", "DEEP_SCANNING");
-        continue;
-      }
-
-      case "DEEP_SCANNING": {
-        const fresh = await prisma.discoveryCandidate.findUniqueOrThrow({ where: { id: candidateId } });
-        let cursor = fresh.deepScanCursor;
-        const total = Math.min(fresh.deepScanVideoIds.length, settings.deepScanVideoCount);
-
-        while (cursor < total) {
           // Cooperative pause/cancel between videos — never mid-model-call.
           const liveRun = await prisma.discoveryRun.findUniqueOrThrow({ where: { id: run.id } });
           if (liveRun.cancelRequested) {
-            await transition(candidateId, "DEEP_SCANNING", "CANCELLED");
+            await transition(candidateId, "ANALYSING_SECOND", "CANCELLED");
             await prisma.analysisJob.update({ where: { id: jobId }, data: { status: "CANCELLED", completedAt: new Date() } });
             await finalizeRunIfDone(run.id);
             return;
@@ -180,28 +136,59 @@ export async function processCreatorQualificationJob(jobId: string, candidateId:
             return;
           }
 
-          const result = await analyseCandidateVideo(jobId, candidateId, cursor, settings, { partialOnHalt: true });
+          const result = await analyseCandidateVideo(jobId, candidateId, cursor, settings);
           if (result.yielded) return;
-          cursor += 1;
-          await prisma.discoveryCandidate.update({ where: { id: candidateId }, data: { deepScanCursor: cursor } });
+
+          // Record any newly-confirmed EXTERNAL PAID sponsors from this video.
+          const sponsors = await collectConfirmedSponsors(fresh.deepScanVideoIds[cursor]);
+          let uniqueSponsors = fresh.uniqueSponsors;
+          for (const brand of sponsors) {
+            const next = addUniqueSponsor(uniqueSponsors, brand);
+            uniqueSponsors = next.sponsors;
+          }
+
+          await prisma.discoveryCandidate.update({
+            where: { id: candidateId },
+            data: { deepScanCursor: cursor + 1, uniqueSponsors },
+          });
+          await prisma.discoveryRun.update({
+            where: { id: run.id },
+            data: { videosAnalysed: { increment: 1 } },
+          });
+        }
+        continue;
+      }
+
+      case "QUALIFIED":
+      case "QUALIFIED_PARTIAL":
+      case "DEEP_SCANNING": {
+        // Qualification is decided by the sequential loop above; this step persists
+        // the qualified creator so future runs skip them and the CSV can export them.
+        const fresh = await prisma.discoveryCandidate.findUniqueOrThrow({ where: { id: candidateId } });
+        if (state !== "DEEP_SCANNING") {
+          state = await transition(candidateId, state, "DEEP_SCANNING");
         }
 
-        // Rebuild the creator's derived intelligence now that all their videos are
-        // analysed — profiles must never lag behind the evidence that feeds scoring.
         if (fresh.channelId) {
+          await persistQualifiedCreator(fresh.channelId, fresh.uniqueSponsors);
           await buildCreatorProfile(fresh.channelId).catch((error) => {
             console.error(`[discovery] profile build failed for channel ${fresh.channelId}`, error);
           });
         }
 
-        await transition(candidateId, "DEEP_SCANNING", "COMPLETED");
+        await prisma.discoveryRun.update({
+          where: { id: run.id },
+          data: { creatorsQualified: { increment: 1 }, qualifiedCount: { increment: 1 } },
+        });
         await recordAudit({
           actorType: "worker",
-          action: "discovery.candidate.completed",
+          action: "discovery.candidate.qualified",
           entityType: "DiscoveryCandidate",
           entityId: candidateId,
-          detail: { videosAnalysed: cursor },
+          detail: { sponsors: fresh.uniqueSponsors, videosAnalysed: fresh.deepScanCursor },
         });
+
+        await transition(candidateId, "DEEP_SCANNING", "COMPLETED");
         await completeJob(jobId);
         await finalizeRunIfDone(run.id);
         return;
@@ -227,54 +214,65 @@ export async function processCreatorQualificationJob(jobId: string, candidateId:
 }
 
 /**
- * Runs the free gate across the candidate's imported videos and persists the result
- * (including the per-video signal breakdown) so the paid phase — and any human
- * reviewing the rejection later — can see exactly what was found where.
+ * Reads the confirmed EXTERNAL PAID sponsor brand names from one analysed video.
+ * Affiliate-only promotions, organic mentions, gifted products, unclear mentions and
+ * the creator's own products are all excluded (see sponsor-qualification.ts).
  */
-async function runFreeGateForCandidate(candidateId: string): Promise<GatingDecision> {
-  const candidate = await prisma.discoveryCandidate.findUniqueOrThrow({ where: { id: candidateId } });
-  const videos = await prisma.video.findMany({
-    where: { id: { in: candidate.deepScanVideoIds } },
-    select: { id: true, title: true, description: true, tags: true, paidProductPlacement: true },
+async function collectConfirmedSponsors(videoDbId: string): Promise<string[]> {
+  const detections = await prisma.sponsorshipDetection.findMany({
+    where: { videoId: videoDbId },
+    include: { brand: { select: { displayName: true } } },
   });
-  const byId = new Map(videos.map((v) => [v.id, v]));
 
-  const inputs: GatingVideoInput[] = candidate.deepScanVideoIds
-    .map((videoId, index) => {
-      const video = byId.get(videoId);
-      if (!video) return null;
-      return {
-        index,
-        title: video.title,
-        description: video.description,
-        tags: video.tags,
-        paidProductPlacement: video.paidProductPlacement,
-      };
-    })
-    .filter((v): v is GatingVideoInput => v !== null);
-
-  const decision = runFreeGate(inputs);
-  await prisma.discoveryCandidate.update({
-    where: { id: candidateId },
-    data: { promotionalSignals: JSON.parse(JSON.stringify(decision)) },
-  });
-  return decision;
+  const confirmed: string[] = [];
+  for (const detection of detections) {
+    const brandName = detection.brand?.displayName ?? detection.rawBrandName;
+    const verdict = countsAsExternalPaidSponsor({
+      brandName,
+      placementType: detection.placementType,
+      reviewStatus: detection.reviewStatus,
+      confidenceScore: detection.confidenceScore,
+      evidenceText: detection.evidenceText,
+      reasoningSummary: detection.reasoningSummary,
+      sponsorshipConfirmed: detection.sponsorshipConfirmed,
+    });
+    if (verdict.counts) confirmed.push(brandName);
+  }
+  return confirmed;
 }
 
-/** Reads back the persisted gate decision (resume-safe after a crash or halt). */
-function readGatingDecision(raw: unknown): GatingDecision {
-  const empty: GatingDecision = { freeQualifyingIndex: null, freeQualifyingBrand: null, paidOrder: [], perVideo: [] };
-  if (!raw || typeof raw !== "object") return empty;
-  const parsed = raw as Partial<GatingDecision>;
-  return {
-    freeQualifyingIndex: parsed.freeQualifyingIndex ?? null,
-    freeQualifyingBrand: parsed.freeQualifyingBrand ?? null,
-    paidOrder: Array.isArray(parsed.paidOrder) ? parsed.paidOrder : [],
-    perVideo: Array.isArray(parsed.perVideo) ? parsed.perVideo : [],
-  };
+/**
+ * Writes the qualified-creator record that makes this channel permanently skippable
+ * by future runs and exportable to the CSV. Done in a transaction so a later failure
+ * cannot leave a half-written creator that is neither skippable nor exportable.
+ */
+async function persistQualifiedCreator(channelId: string, sponsors: string[]): Promise<void> {
+  const newestEligible = await prisma.video.findFirst({
+    where: {
+      channelId,
+      isLivestream: false,
+      durationSeconds: { gte: 180 },
+      publishedAt: { not: null },
+    },
+    orderBy: { publishedAt: "desc" },
+    select: { publishedAt: true },
+  });
+
+  await prisma.$transaction(async (tx) => {
+    const channel = await tx.channel.findUniqueOrThrow({ where: { id: channelId } });
+    await tx.channel.update({
+      where: { id: channelId },
+      data: {
+        qualifiedAt: channel.qualifiedAt ?? new Date(),
+        confirmedSponsorBrands: sponsors,
+        latestEligibleVideoAt: newestEligible?.publishedAt ?? null,
+        discoveredAt: channel.discoveredAt ?? new Date(),
+      },
+    });
+  });
 }
 
-/** Optimistic state transition — fails loudly if another writer moved the candidate first. */
+/** Optimistic state transition/** Optimistic state transition — fails loudly if another writer moved the candidate first. */
 async function transition(candidateId: string, from: CandidateState, to: CandidateState): Promise<CandidateState> {
   const result = await prisma.discoveryCandidate.updateMany({
     where: { id: candidateId, state: from },
@@ -298,6 +296,7 @@ async function rejectCandidate(
   from: CandidateState,
   to: "REJECTED_NOT_COMMERCIAL" | "REJECTED_NO_SPONSOR",
   settings: DiscoverySettingsSnapshot,
+  detail?: string,
 ) {
   const candidate = await prisma.discoveryCandidate.findUniqueOrThrow({ where: { id: candidateId } });
   await transition(candidateId, from, to);
@@ -310,14 +309,17 @@ async function rejectCandidate(
   });
   await prisma.discoveryRun.update({
     where: { id: candidate.discoveryRunId },
-    data: { candidatesRejected: { increment: 1 } },
+    data: {
+      candidatesRejected: { increment: 1 },
+      ...(to === "REJECTED_NO_SPONSOR" ? { rejectedNoSponsor: { increment: 1 } } : {}),
+    },
   });
   await recordAudit({
     actorType: "worker",
     action: "discovery.candidate.rejected",
     entityType: "DiscoveryCandidate",
     entityId: candidateId,
-    detail: { reason: to },
+    detail: { reason: to, detail },
   });
 }
 
@@ -340,7 +342,7 @@ async function importCandidateVideos(
   let uploads: YouTubeVideoResource[] = [];
 
   if (provider.getRecentUploads) {
-    uploads = await provider.getRecentUploads(candidate.youtubeChannelId, settings.deepScanVideoCount);
+    uploads = await provider.getRecentUploads(candidate.youtubeChannelId, UPLOAD_FETCH_COUNT);
   } else {
     const reservationKey = `candidate:${candidateId}:uploads`;
     try {
@@ -361,7 +363,7 @@ async function importCandidateVideos(
     try {
       const ytChannel = await youtubeClient.getChannelById(candidate.youtubeChannelId);
       if (!ytChannel.uploadsPlaylistId) throw new Error("Channel has no uploads playlist.");
-      const videoIds = await youtubeClient.getRecentUploadVideoIds(ytChannel.uploadsPlaylistId, settings.deepScanVideoCount);
+      const videoIds = await youtubeClient.getRecentUploadVideoIds(ytChannel.uploadsPlaylistId, UPLOAD_FETCH_COUNT);
       uploads = await youtubeClient.getVideosByIds(videoIds);
       await commitQuota(reservationKey);
     } catch (error) {
@@ -370,7 +372,20 @@ async function importCandidateVideos(
     }
   }
 
-  const newestPublishedAt = uploads[0]?.publishedAt ? new Date(uploads[0].publishedAt) : null;
+  // Eligibility filter: no Shorts, no livestream replays, nothing under three
+  // minutes, no duplicates. Only eligible videos are stored for analysis.
+  const eligibility = selectEligibleVideos(
+    uploads.map((v) => ({
+      youtubeVideoId: v.id,
+      durationSeconds: v.durationSeconds,
+      isLivestream: v.isLivestream,
+      publishedAt: v.publishedAt ? new Date(v.publishedAt) : null,
+      source: v,
+    })),
+  );
+  const eligibleUploads = eligibility.eligible.slice(0, MAX_VIDEOS_PER_CREATOR).map((e) => e.source);
+
+  const newestPublishedAt = eligibleUploads[0]?.publishedAt ? new Date(eligibleUploads[0].publishedAt) : null;
   const activity = evaluateActivity(newestPublishedAt, settings);
   if (!activity.passed) {
     await transition(candidateId, "PENDING_ANALYSIS", "FILTERED_OUT");
@@ -401,7 +416,7 @@ async function importCandidateVideos(
   if (!candidate.channelId) throw new Error("Accepted candidate has no linked Channel row.");
 
   const videoDbIds: string[] = [];
-  for (const video of uploads) {
+  for (const video of eligibleUploads) {
     const row = await prisma.video.upsert({
       where: { youtubeVideoId: video.id },
       update: {
@@ -414,6 +429,7 @@ async function importCandidateVideos(
         likeCount: video.likeCount,
         tags: video.tags,
         paidProductPlacement: video.paidProductPlacement,
+        isLivestream: video.isLivestream,
       },
       create: {
         youtubeVideoId: video.id,
@@ -427,6 +443,7 @@ async function importCandidateVideos(
         likeCount: video.likeCount,
         tags: video.tags,
         paidProductPlacement: video.paidProductPlacement,
+        isLivestream: video.isLivestream,
       },
     });
     videoDbIds.push(row.id);

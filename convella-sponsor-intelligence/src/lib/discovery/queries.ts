@@ -43,7 +43,10 @@ export async function getDiscoveryDashboardData() {
       })
     : null;
 
+  const qualifiedTotal = await prisma.channel.count({ where: { qualifiedAt: { not: null } } });
+
   return {
+    qualifiedTotal,
     budgets: {
       daySpend,
       dailyCostLimit,

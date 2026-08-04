@@ -22,12 +22,26 @@ function def<T>(definition: SettingDefinition<T>): SettingDefinition<T> {
 }
 
 export const SETTING_DEFINITIONS = {
+  "discovery.qualifiedTarget": def({
+    key: "discovery.qualifiedTarget",
+    schema: z.number().int().min(1).max(200),
+    defaultValue: 30,
+    envFallback: "DISCOVERY_QUALIFIED_TARGET",
+    description: "How many NEW qualified creators (>=1 confirmed sponsor) a run collects before stopping.",
+  }),
+  "discovery.maxCandidatesPerRun": def({
+    key: "discovery.maxCandidatesPerRun",
+    schema: z.number().int().min(1).max(1000),
+    defaultValue: 150,
+    envFallback: "DISCOVERY_MAX_CANDIDATES_PER_RUN",
+    description: "Hard ceiling on candidate creators analysed in one run, whether or not the target is met.",
+  }),
   "discovery.maxCreatorsPerRun": def({
     key: "discovery.maxCreatorsPerRun",
-    schema: z.number().int().min(1).max(100),
-    defaultValue: 25,
+    schema: z.number().int().min(1).max(200),
+    defaultValue: 40,
     envFallback: "DISCOVERY_MAX_CREATORS_PER_RUN",
-    description: "Maximum candidates a single discovery run will take past filtering.",
+    description: "Candidates created per search pass (the run keeps searching until the qualified target or candidate ceiling is reached).",
   }),
   "discovery.maxConcurrentCreators": def({
     key: "discovery.maxConcurrentCreators",
@@ -123,6 +137,8 @@ export type SettingValue<K extends SettingKey> = (typeof SETTING_DEFINITIONS)[K]
 
 /** The frozen per-run limits snapshot stored on DiscoveryRun.settingsSnapshot. */
 export interface DiscoverySettingsSnapshot {
+  qualifiedTarget: number;
+  maxCandidatesPerRun: number;
   maxCreatorsPerRun: number;
   maxConcurrentCreators: number;
   deepScanVideoCount: number;

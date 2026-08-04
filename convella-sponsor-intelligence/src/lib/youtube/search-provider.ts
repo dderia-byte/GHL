@@ -33,13 +33,12 @@ class RealYouTubeSearchProvider implements YouTubeSearchProvider {
 // Mock fixtures — ALL FICTIONAL (per the repository's seed-data policy).
 // The four creator archetypes deliberately exercise every branch of the
 // qualification decision tree:
-//   alpha   → newest video explicitly sponsored (Stage 1)      → QUALIFIED
-//   beta    → newest affiliate-only, 2nd video sponsored       → QUALIFIED (2nd-video branch)
-//   overlap → returned by EVERY query (dedup), no signals      → REJECTED_NOT_COMMERCIAL
+//   alpha   → newest video sponsored, plus a Short and a livestream replay that
+//             must be filtered out as ineligible, and a 2nd sponsor further down
+//   beta    → newest affiliate-only, 2nd video sponsored
+//   buried  → sponsors only in older uploads
+//   overlap → returned by EVERY query (dedup), no sponsors at all
 //   giant   → 2.4M subscribers                                 → filtered SUBSCRIBERS_OVER_CAP
-// Non-sponsored fixture videos carry durationSeconds: null so the mock Stage 3
-// (which is content-independent) is skipped and the decision tree stays visible
-// in keyless demos.
 // ---------------------------------------------------------------------------
 
 type MockArchetype = "alpha" | "beta" | "overlap" | "giant" | "buried";
@@ -87,11 +86,12 @@ function mockVideo(
     description: "A plain fictional demo video with no commercial content.",
     thumbnailUrl: null,
     publishedAt: new Date(Date.now() - daysAgo * 24 * 3600 * 1000).toISOString(),
-    durationSeconds: null,
+    durationSeconds: 480,
     viewCount: 12_000,
     likeCount: 800,
     tags: [],
     paidProductPlacement: false,
+    isLivestream: false,
     ...overrides,
   };
 }
@@ -108,6 +108,16 @@ function mockUploads(channelId: string, count: number): YouTubeVideoResource[] {
           description: sponsoredDescription("Nimbus Notes", "nimbusnotes.example.com"),
           durationSeconds: 620,
         }),
+      );
+    } else if (archetype === "alpha" && i === 1) {
+      // Ineligible: a Short. Must be filtered out before analysis.
+      videos.push(
+        mockVideo(channelId, i, { title: "Quick tip #shorts (fictional demo)", durationSeconds: 45 }),
+      );
+    } else if (archetype === "alpha" && i === 4) {
+      // Ineligible: a livestream replay. Must be filtered out before analysis.
+      videos.push(
+        mockVideo(channelId, i, { title: "Live Q&A replay (fictional demo)", durationSeconds: 7200, isLivestream: true }),
       );
     } else if (archetype === "alpha" && i === 2) {
       videos.push(

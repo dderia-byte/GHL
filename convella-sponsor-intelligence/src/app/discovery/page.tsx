@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { DollarSign, Gauge, Radar, Users } from "lucide-react";
+import { DollarSign, Download, Gauge, Radar, Users } from "lucide-react";
 import { getDiscoveryDashboardData } from "@/lib/discovery/queries";
 import { PageHeader, Card, AnalyticsCard, EmptyState } from "@/components/ui/card";
 import { DiscoveryRunStatusBadge } from "@/components/ui/badge";
@@ -16,7 +16,9 @@ function usd(value: number): string {
 
 export default async function DiscoveryDashboardPage() {
   const data = await getDiscoveryDashboardData();
-  const { budgets, activeRun, activeRunStates, activeCandidate, recentRuns, enabledQueries } = data;
+  const { budgets, activeRun, activeRunStates, activeCandidate, recentRuns, enabledQueries, qualifiedTotal } = data;
+
+  const lastFinishedRun = recentRuns.find((r) => ["COMPLETED", "CANCELLED", "FAILED"].includes(r.status)) ?? null;
 
   const runActive = activeRun !== null && ["QUEUED", "RUNNING", "PAUSED"].includes(activeRun.status);
   const costExhausted = budgets.daySpend >= budgets.dailyCostLimit;
@@ -38,7 +40,16 @@ export default async function DiscoveryDashboardPage() {
       <PageHeader
         title="Discovery"
         description="Automatically search YouTube, qualify creators, and analyse their sponsorships — no manual URL pasting."
-        actions={<StartRunButton disabled={Boolean(disabledReason)} disabledReason={disabledReason} />}
+        actions={
+          <div className="flex flex-wrap items-center gap-2">
+            {qualifiedTotal > 0 && (
+              <LinkButton href="/api/export/qualified-creators" variant="secondary">
+                <Download className="size-4" /> Download CSV ({qualifiedTotal})
+              </LinkButton>
+            )}
+            <StartRunButton disabled={Boolean(disabledReason)} disabledReason={disabledReason} />
+          </div>
+        }
       />
 
       <div className="grid grid-cols-2 gap-4 xl:grid-cols-4">
@@ -77,10 +88,10 @@ export default async function DiscoveryDashboardPage() {
           </div>
 
           <dl className="mt-4 grid grid-cols-2 gap-4 text-sm sm:grid-cols-3 lg:grid-cols-6">
-            <Stat label="Channels found" value={activeRun.channelsDiscovered} />
-            <Stat label="Candidates" value={activeRun.candidatesCreated} />
-            <Stat label="Rejected" value={activeRun.candidatesRejected} />
-            <Stat label="Qualified" value={activeRun.creatorsQualified} />
+            <Stat label="Qualified creators" value={`${activeRun.qualifiedCount} / 30`} />
+            <Stat label="Candidates analysed" value={`${activeRun.candidatesAnalysed} / 150`} />
+            <Stat label="Duplicates skipped" value={activeRun.duplicatesSkipped} />
+            <Stat label="No sponsor found" value={activeRun.rejectedNoSponsor} />
             <Stat label="Videos analysed" value={activeRun.videosAnalysed} />
             <Stat label="Cost so far" value={usd(Number(activeRun.totalEstimatedCost))} />
           </dl>
@@ -108,6 +119,30 @@ export default async function DiscoveryDashboardPage() {
               View run details →
             </Link>
           </div>
+        </Card>
+      )}
+
+      {lastFinishedRun && (
+        <Card>
+          <h2 className="text-sm font-semibold text-foreground">Last run summary</h2>
+          <p className="mt-1 text-xs text-muted-foreground">
+            {lastFinishedRun.stopReason ?? `Run ${lastFinishedRun.status.replaceAll("_", " ").toLowerCase()}.`}
+          </p>
+          <dl className="mt-4 grid grid-cols-2 gap-4 text-sm sm:grid-cols-3 lg:grid-cols-6">
+            <Stat label="Candidates analysed" value={lastFinishedRun.candidatesAnalysed} />
+            <Stat label="New qualified creators" value={lastFinishedRun.qualifiedCount} />
+            <Stat label="Existing creators skipped" value={lastFinishedRun.duplicatesSkipped} />
+            <Stat label="Rejected (no sponsor)" value={lastFinishedRun.rejectedNoSponsor} />
+            <Stat label="Videos analysed" value={lastFinishedRun.videosAnalysed} />
+            <Stat label="Cost" value={usd(Number(lastFinishedRun.totalEstimatedCost))} />
+          </dl>
+          {lastFinishedRun.qualifiedCount > 0 && (
+            <div className="mt-4">
+              <LinkButton href={`/api/export/qualified-creators?runId=${lastFinishedRun.id}`} variant="secondary">
+                <Download className="size-4" /> Download this run&apos;s CSV
+              </LinkButton>
+            </div>
+          )}
         </Card>
       )}
 

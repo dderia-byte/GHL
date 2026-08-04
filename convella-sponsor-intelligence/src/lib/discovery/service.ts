@@ -76,7 +76,9 @@ export function parseSettingsSnapshot(raw: unknown): DiscoverySettingsSnapshot {
   // The snapshot was written by buildDiscoverySettingsSnapshot; the spread-over-
   // defaults keeps old runs readable if new snapshot fields are added later.
   const defaults: DiscoverySettingsSnapshot = {
-    maxCreatorsPerRun: 25,
+    qualifiedTarget: 30,
+    maxCandidatesPerRun: 150,
+    maxCreatorsPerRun: 40,
     maxConcurrentCreators: 1,
     deepScanVideoCount: 5,
     maxSubscribers: 800_000,
@@ -154,6 +156,41 @@ export async function cancelDiscoveryRun(runId: string, actorId?: string) {
   await recordAudit({ actorType: "user", actorId, action: "discovery.run.cancelled", entityType: "DiscoveryRun", entityId: runId });
 }
 
+export interface ContinuationDecision {
+  action: "CONTINUE" | "STOP";
+  stopReason?: string;
+}
+
+/**
+ * Decides whether a run should search for more candidates. Pure so the stopping
+ * rules are directly testable: stop at the qualified target, at the candidate
+ * ceiling, or when searches stop yielding anyone new.
+ */
+export function decideContinuation(state: {
+  qualifiedCount: number;
+  candidatesAnalysed: number;
+  qualifiedTarget: number;
+  maxCandidatesPerRun: number;
+  searchExhausted: boolean;
+}): ContinuationDecision {
+  if (state.qualifiedCount >= state.qualifiedTarget) {
+    return { action: "STOP", stopReason: `Reached the target of ${state.qualifiedTarget} new qualified creators.` };
+  }
+  if (state.candidatesAnalysed >= state.maxCandidatesPerRun) {
+    return {
+      action: "STOP",
+      stopReason: `Reached the maximum of ${state.maxCandidatesPerRun} analysed candidates with ${state.qualifiedCount} qualified creator(s) found — exporting the partial results.`,
+    };
+  }
+  if (state.searchExhausted) {
+    return {
+      action: "STOP",
+      stopReason: `Searches returned no further new creators; found ${state.qualifiedCount} of ${state.qualifiedTarget}.`,
+    };
+  }
+  return { action: "CONTINUE" };
+}
+
 /**
  * Marks the run COMPLETED once every candidate is terminal — called by the
  * qualification handler after each candidate finishes. A run that was halted or
@@ -168,9 +205,32 @@ export async function finalizeRunIfDone(runId: string) {
   });
   if (unfinished > 0) return;
 
+  // Every candidate is done. Either the run has met a stopping condition, or it must
+  // search again for more candidates until it does.
+  const settings = parseSettingsSnapshot(run.settingsSnapshot);
+  const decision = decideContinuation({
+    qualifiedCount: run.qualifiedCount,
+    candidatesAnalysed: run.candidatesAnalysed,
+    qualifiedTarget: settings.qualifiedTarget,
+    maxCandidatesPerRun: settings.maxCandidatesPerRun,
+    searchExhausted: Boolean((run.searchCursors as { exhausted?: boolean } | null)?.exhausted),
+  });
+
+  if (decision.action === "CONTINUE") {
+    await enqueueDiscoveryRunJob(runId);
+    await recordAudit({
+      actorType: "worker",
+      action: "discovery.run.continuing",
+      entityType: "DiscoveryRun",
+      entityId: runId,
+      detail: { qualifiedCount: run.qualifiedCount, candidatesAnalysed: run.candidatesAnalysed },
+    });
+    return;
+  }
+
   await prisma.discoveryRun.update({
     where: { id: runId },
-    data: { status: "COMPLETED", completedAt: new Date() },
+    data: { status: "COMPLETED", completedAt: new Date(), stopReason: decision.stopReason },
   });
   await recordAudit({
     actorType: "worker",

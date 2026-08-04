@@ -108,6 +108,12 @@ function mapVideoResource(item: Record<string, unknown>): YouTubeVideoResource {
     likeCount: statistics.likeCount ? Number(statistics.likeCount) : null,
     tags: Array.isArray(snippet.tags) ? (snippet.tags as string[]) : [],
     paidProductPlacement: Boolean(paidProductPlacementDetails.hasPaidProductPlacement),
+    // A completed livestream/premiere carries liveStreamingDetails; a live or upcoming
+    // one is flagged by snippet.liveBroadcastContent. Either way it is a replay, not a
+    // produced upload, so it is excluded from sponsorship analysis.
+    isLivestream:
+      item.liveStreamingDetails !== undefined ||
+      (typeof snippet.liveBroadcastContent === "string" && snippet.liveBroadcastContent !== "none"),
   };
 }
 
@@ -115,7 +121,7 @@ const channelCache = new TtlCache<YouTubeChannelResource>(CACHE_TTL_MS);
 const videoCache = new TtlCache<YouTubeVideoResource>(CACHE_TTL_MS);
 
 const CHANNEL_PARTS = "snippet,statistics,contentDetails,topicDetails";
-const VIDEO_PARTS = "snippet,statistics,contentDetails,paidProductPlacementDetails";
+const VIDEO_PARTS = "snippet,statistics,contentDetails,paidProductPlacementDetails,liveStreamingDetails";
 
 /**
  * Thin, quota-aware wrapper around the official YouTube Data API v3. Prefers cheap

@@ -70,6 +70,8 @@ export async function setSetting<K extends SettingKey>(
  */
 export async function buildDiscoverySettingsSnapshot(): Promise<DiscoverySettingsSnapshot> {
   return {
+    qualifiedTarget: await getSetting("discovery.qualifiedTarget"),
+    maxCandidatesPerRun: await getSetting("discovery.maxCandidatesPerRun"),
     maxCreatorsPerRun: await getSetting("discovery.maxCreatorsPerRun"),
     maxConcurrentCreators: await getSetting("discovery.maxConcurrentCreators"),
     deepScanVideoCount: await getSetting("discovery.deepScanVideoCount"),

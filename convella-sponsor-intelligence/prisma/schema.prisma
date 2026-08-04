@@ -152,6 +152,15 @@ model Channel {
   /// "active" | "paused" — reserved hook for the continuous-monitoring roadmap.
   monitoringStatus String    @default("active")
 
+  // --- Qualified-creator record (the CSV export reads these) ------------------
+  /// Set once the creator passed qualification with >=1 confirmed external paid
+  /// sponsor. Its presence is what makes the creator exportable.
+  qualifiedAt             DateTime?
+  /// Unique confirmed sponsor brand names (max 2 — analysis stops at two).
+  confirmedSponsorBrands  String[]  @default([])
+  /// Publish date of the newest ELIGIBLE long-form video (not the sponsor video).
+  latestEligibleVideoAt   DateTime?
+
   createdAt        DateTime  @default(now())
   updatedAt        DateTime  @updatedAt
 
@@ -181,6 +190,8 @@ model Video {
   likeCount            BigInt?
   tags                 String[]  @default([])
   paidProductPlacement Boolean   @default(false)
+  /// True for livestream replays/premieres — excluded from sponsorship analysis.
+  isLivestream         Boolean   @default(false)
 
   transcriptStatus TranscriptStatus @default(NOT_REQUESTED)
   transcriptSource String?
@@ -536,6 +547,21 @@ model DiscoveryRun {
   quotaUnitsUsed     Int     @default(0)
   totalEstimatedCost Decimal @default(0) @db.Decimal(10, 6)
 
+  // --- Run summary counters (spec: final run summary) ------------------------
+  /// Candidates that reached analysis (excludes duplicates skipped up front).
+  candidatesAnalysed Int @default(0)
+  /// Creators skipped because their channel id already exists in the database.
+  duplicatesSkipped  Int @default(0)
+  /// Creators analysed but rejected for having no confirmed sponsor.
+  rejectedNoSponsor  Int @default(0)
+  /// Qualified creators collected by this run (target: 30).
+  qualifiedCount     Int @default(0)
+  /// Why the run stopped, shown verbatim in the summary.
+  stopReason         String?
+  /// Per-query nextPageToken cursors so continuation searches resume rather than
+  /// re-paying for page one.
+  searchCursors      Json?
+
   errorMessage String?
   startedAt    DateTime?
   completedAt  DateTime?
@@ -581,6 +607,8 @@ model DiscoveryCandidate {
   /// index to analyse. Crash/halt recovery continues from exactly here.
   deepScanVideoIds String[] @default([])
   deepScanCursor   Int      @default(0)
+  /// Unique confirmed external paid sponsors found so far (max 2).
+  uniqueSponsors   String[] @default([])
   /// How many paid gating analyses have been attempted (resume cursor into the free
   /// gate's ranked paidOrder), so a halt/crash mid-gating never re-pays for a video.
   gatingCursor     Int      @default(0)

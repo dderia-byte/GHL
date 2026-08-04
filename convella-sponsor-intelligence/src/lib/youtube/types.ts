@@ -49,4 +49,6 @@ export interface YouTubeVideoResource {
   likeCount: number | null;
   tags: string[];
   paidProductPlacement: boolean;
+  /** Livestream replay/premiere — excluded from sponsorship analysis. */
+  isLivestream: boolean;
 }
