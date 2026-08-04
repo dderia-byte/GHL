@@ -22,7 +22,9 @@ export async function createQueryAction(
 
   const query = await prisma.discoveryQuery.create({
     data: {
-      label: data.label,
+      // label mirrors the search text: the column is kept for existing rows and for
+      // display, but is no longer a separate thing to fill in.
+      label: data.queryText,
       queryText: data.queryText,
       searchType: data.searchType,
       regionCode: data.regionCode,
@@ -39,7 +41,7 @@ export async function createQueryAction(
     action: "discovery.query.created",
     entityType: "DiscoveryQuery",
     entityId: query.id,
-    detail: { label: data.label, queryText: data.queryText },
+    detail: { queryText: data.queryText },
   });
   revalidatePath("/discovery/queries");
   return { success: true };

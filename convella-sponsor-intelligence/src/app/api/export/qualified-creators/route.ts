@@ -19,7 +19,6 @@ export async function GET(request: Request) {
     select: {
       name: true,
       youtubeChannelId: true,
-      niche: true,
       confirmedSponsorBrands: true,
       latestEligibleVideoAt: true,
       // Any candidate flagged previouslySeen means this creator was already known
@@ -32,7 +31,6 @@ export async function GET(request: Request) {
     channels.map((c) => ({
       channelName: c.name,
       youtubeChannelId: c.youtubeChannelId,
-      niche: c.niche,
       sponsorBrands: c.confirmedSponsorBrands,
       latestEligibleVideoAt: c.latestEligibleVideoAt,
       previouslySeen: c.discoveryCandidates.some((candidate) => candidate.previouslySeen),

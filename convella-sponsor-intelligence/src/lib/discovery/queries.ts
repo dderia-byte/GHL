@@ -73,7 +73,7 @@ export async function getDiscoveryRunDetail(runId: string) {
     include: {
       candidates: {
         orderBy: { createdAt: "asc" },
-        include: { query: { select: { label: true } }, channel: { select: { id: true, name: true } } },
+        include: { query: { select: { queryText: true } }, channel: { select: { id: true, name: true } } },
       },
     },
   });
@@ -114,7 +114,7 @@ export async function listDiscoveredCreators(tab: CreatorTab) {
     orderBy: { updatedAt: "desc" },
     take: 100,
     include: {
-      query: { select: { label: true } },
+      query: { select: { queryText: true } },
       channel: { select: { id: true, name: true, subscriberCount: true, thumbnailUrl: true } },
       run: { select: { id: true, createdAt: true } },
     },

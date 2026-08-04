@@ -36,8 +36,7 @@ export default async function DiscoveryQueriesPage() {
           <table className="w-full min-w-[760px] text-sm">
             <thead>
               <tr className="text-left text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                <th className="px-5 py-3 font-medium">Label</th>
-                <th className="px-2 py-3 font-medium">Search text</th>
+                <th className="px-5 py-3 font-medium">Search text</th>
                 <th className="px-2 py-3 font-medium">Type</th>
                 <th className="px-2 py-3 font-medium">Niche keywords</th>
                 <th className="px-2 py-3 font-medium">Quota / run</th>
@@ -50,8 +49,7 @@ export default async function DiscoveryQueriesPage() {
             <tbody className="divide-y divide-border">
               {queries.map((query) => (
                 <tr key={query.id} className="transition-colors hover:bg-muted/50">
-                  <td className="px-5 py-3 font-medium text-foreground">{query.label}</td>
-                  <td className="px-2 py-3 text-muted-foreground">“{query.queryText}”</td>
+                  <td className="px-5 py-3 font-medium text-foreground">“{query.queryText}”</td>
                   <td className="px-2 py-3 text-muted-foreground">{query.searchType}</td>
                   <td className="px-2 py-3 text-xs text-muted-foreground">
                     {query.nicheKeywords.length ? query.nicheKeywords.join(", ") : "—"}

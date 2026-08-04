@@ -126,7 +126,7 @@ export default async function DiscoveredCreatorsPage(props: {
                       <span className="text-xs text-muted-foreground">—</span>
                     )}
                   </td>
-                  <td className="px-2 py-3 text-xs text-muted-foreground">{creator.query?.label ?? "—"}</td>
+                  <td className="px-2 py-3 text-xs text-muted-foreground">{creator.query?.queryText ?? "—"}</td>
                   <td className="px-2 py-3 text-muted-foreground">${creator.estimatedCostNumber.toFixed(2)}</td>
                   <td className="px-5 py-3 text-right text-xs text-muted-foreground">
                     {formatRelativeTime(creator.updatedAt)}

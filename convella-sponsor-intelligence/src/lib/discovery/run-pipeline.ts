@@ -281,7 +281,7 @@ export async function processDiscoveryRunJob(jobId: string, discoveryRunId: stri
     const channelRow = await upsertChannelRecord(resource);
     await prisma.channel.update({
       where: { id: channelRow.id },
-      data: { discoverySource: "discovery", discoveredAt: new Date(), niche: query?.label ?? null },
+      data: { discoverySource: "discovery", discoveredAt: new Date(), niche: query?.queryText ?? null },
     });
 
     const candidate = await prisma.discoveryCandidate.upsert({

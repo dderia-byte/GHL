@@ -9,7 +9,7 @@ import {
 } from "@/lib/discovery/sponsor-qualification";
 import { isEligibleLongForm, selectEligibleVideos } from "@/lib/discovery/video-eligibility";
 import { decideContinuation } from "@/lib/discovery/service";
-import { buildQualifiedCreatorsCsv, qualifiedCreatorsFilename, toConciseNiche } from "@/lib/csv/qualified-creators-export";
+import { buildQualifiedCreatorsCsv, qualifiedCreatorsFilename } from "@/lib/csv/qualified-creators-export";
 
 function detection(overrides: Partial<SponsorCandidateDetection> = {}): SponsorCandidateDetection {
   return {
@@ -224,39 +224,33 @@ describe("Qualified creators CSV", () => {
       {
         channelName: "Fictional Dev Creator",
         youtubeChannelId: "UCfictional123",
-        niche: "AI developers",
         sponsorBrands: ["Nimbus Notes", "Aurora VPN"],
         latestEligibleVideoAt: new Date("2026-07-28T12:00:00Z"),
       },
     ]);
     const [header, row] = csv.split("\r\n");
-    expect(header).toBe("YouTuber Name,Channel URL,Niche,Sponsor Brands,Latest Video Date,Duplicate");
+    expect(header).toBe("YouTuber Name,Channel URL,Sponsor Brands,Latest Video Date,Duplicate");
     expect(row).toBe(
-      'Fictional Dev Creator,https://www.youtube.com/channel/UCfictional123,AI,Nimbus Notes | Aurora VPN,2026-07-28,No',
+      'Fictional Dev Creator,https://www.youtube.com/channel/UCfictional123,Nimbus Notes | Aurora VPN,2026-07-28,No',
     );
   });
 
   it("gives one row per creator, never one per sponsor", () => {
     const csv = buildQualifiedCreatorsCsv([
-      { channelName: "A", youtubeChannelId: "UC1", niche: "Coding", sponsorBrands: ["X", "Y"], latestEligibleVideoAt: new Date("2026-07-01") },
-      { channelName: "B", youtubeChannelId: "UC2", niche: "DevOps", sponsorBrands: ["Z"], latestEligibleVideoAt: new Date("2026-07-02") },
+      { channelName: "A", youtubeChannelId: "UC1", sponsorBrands: ["X", "Y"], latestEligibleVideoAt: new Date("2026-07-01") },
+      { channelName: "B", youtubeChannelId: "UC2", sponsorBrands: ["Z"], latestEligibleVideoAt: new Date("2026-07-02") },
     ]);
     expect(csv.split("\r\n")).toHaveLength(3); // header + 2 creators
   });
 
   it("caps sponsors at two per creator", () => {
     const csv = buildQualifiedCreatorsCsv([
-      { channelName: "A", youtubeChannelId: "UC1", niche: null, sponsorBrands: ["X", "Y", "Z"], latestEligibleVideoAt: null },
+      { channelName: "A", youtubeChannelId: "UC1", sponsorBrands: ["X", "Y", "Z"], latestEligibleVideoAt: null },
     ]);
     expect(csv).toContain("X | Y");
     expect(csv).not.toContain("Z");
   });
 
-  it("keeps the niche column concise", () => {
-    expect(toConciseNiche("SaaS founders")).toBe("SaaS");
-    expect(toConciseNiche("DevOps / platform engineers")).toBe("DevOps");
-    expect(toConciseNiche(null)).toBe("");
-  });
 
   it("uses the required filename format", () => {
     expect(qualifiedCreatorsFilename(new Date("2026-08-03T09:00:00Z"))).toBe("qualified_creators_2026-08-03.csv");
@@ -264,8 +258,8 @@ describe("Qualified creators CSV", () => {
 
   it("adds a Duplicate column so previously-seen creators can be filtered by hand", () => {
     const csv = buildQualifiedCreatorsCsv([
-      { channelName: "Fresh Find", youtubeChannelId: "UC1", niche: "AI", sponsorBrands: ["X"], latestEligibleVideoAt: null, previouslySeen: false },
-      { channelName: "Seen Before", youtubeChannelId: "UC2", niche: "AI", sponsorBrands: ["Y"], latestEligibleVideoAt: null, previouslySeen: true },
+      { channelName: "Fresh Find", youtubeChannelId: "UC1", sponsorBrands: ["X"], latestEligibleVideoAt: null, previouslySeen: false },
+      { channelName: "Seen Before", youtubeChannelId: "UC2", sponsorBrands: ["Y"], latestEligibleVideoAt: null, previouslySeen: true },
     ]);
     const [header, fresh, seen] = csv.split("\r\n");
     expect(header.endsWith(",Duplicate")).toBe(true);
@@ -275,14 +269,14 @@ describe("Qualified creators CSV", () => {
 
   it("defaults Duplicate to No when the flag is absent", () => {
     const csv = buildQualifiedCreatorsCsv([
-      { channelName: "A", youtubeChannelId: "UC1", niche: "AI", sponsorBrands: ["X"], latestEligibleVideoAt: null },
+      { channelName: "A", youtubeChannelId: "UC1", sponsorBrands: ["X"], latestEligibleVideoAt: null },
     ]);
     expect(csv.split("\r\n")[1].endsWith(",No")).toBe(true);
   });
 
   it("leaves the date blank rather than guessing when unknown", () => {
     const csv = buildQualifiedCreatorsCsv([
-      { channelName: "A", youtubeChannelId: "UC1", niche: "AI", sponsorBrands: ["X"], latestEligibleVideoAt: null },
+      { channelName: "A", youtubeChannelId: "UC1", sponsorBrands: ["X"], latestEligibleVideoAt: null },
     ]);
     expect(csv.split("\r\n")[1]).toContain(",,"); // empty date cell before Duplicate
   });

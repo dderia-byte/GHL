@@ -2,7 +2,7 @@ import { z } from "zod";
 
 /** Create/edit form for a discovery search query. */
 export const discoveryQueryFormSchema = z.object({
-  label: z.string().trim().min(1, "Give the query a short label.").max(80),
+  // The search text doubles as the query's label — one field, no duplicate naming.
   queryText: z.string().trim().min(2, "Enter the YouTube search text.").max(200),
   searchType: z.enum(["video", "channel"]).default("video"),
   regionCode: z

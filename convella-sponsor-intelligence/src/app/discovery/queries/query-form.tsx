@@ -15,13 +15,19 @@ export function QueryForm() {
 
   return (
     <form action={formAction} className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-      <label className="flex flex-col gap-1.5 text-sm font-medium text-foreground">
-        Label
-        <input name="label" required maxLength={80} placeholder="e.g. AI coding tools — EN" className={INPUT_CLASSES} />
-      </label>
-      <label className="flex flex-col gap-1.5 text-sm font-medium text-foreground">
+      <label className="flex flex-col gap-1.5 text-sm font-medium text-foreground sm:col-span-2">
         YouTube search text
-        <input name="queryText" required maxLength={200} placeholder="e.g. AI coding tools review" className={INPUT_CLASSES} />
+        <input
+          name="queryText"
+          required
+          maxLength={200}
+          placeholder="e.g. AI coding tools review"
+          className={INPUT_CLASSES}
+        />
+        <span className="text-xs font-normal text-muted-foreground">
+          Exactly what you would type into the YouTube search bar. This is also how the query is labelled everywhere
+          else in the app.
+        </span>
       </label>
       <label className="flex flex-col gap-1.5 text-sm font-medium text-foreground">
         Search type

@@ -105,7 +105,7 @@ export default async function DiscoveryRunDetailPage(props: { params: Promise<{ 
                       ? Number(candidate.subscriberCountAtDiscovery).toLocaleString()
                       : "—"}
                   </td>
-                  <td className="px-2 py-3 text-muted-foreground">{candidate.query?.label ?? "—"}</td>
+                  <td className="px-2 py-3 text-muted-foreground">{candidate.query?.queryText ?? "—"}</td>
                   <td className="px-2 py-3">
                     <CandidateStateBadge state={candidate.state} />
                   </td>
