@@ -37,10 +37,6 @@ export function QueryForm() {
         </select>
       </label>
       <label className="flex flex-col gap-1.5 text-sm font-medium text-foreground">
-        Niche keywords <span className="font-normal text-muted-foreground">(comma-separated, optional)</span>
-        <input name="nicheKeywords" placeholder="e.g. coding, developer, programming" className={INPUT_CLASSES} />
-      </label>
-      <label className="flex flex-col gap-1.5 text-sm font-medium text-foreground">
         Region <span className="font-normal text-muted-foreground">(optional, e.g. US)</span>
         <input name="regionCode" maxLength={2} placeholder="US" className={INPUT_CLASSES} />
       </label>

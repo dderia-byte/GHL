@@ -20,16 +20,6 @@ export const discoveryQueryFormSchema = z.object({
     .optional()
     .or(z.literal("").transform(() => undefined)),
   publishedWithinDays: z.coerce.number().int().min(1).max(3650).optional().or(z.literal("").transform(() => undefined)),
-  nicheKeywords: z
-    .string()
-    .default("")
-    .transform((raw) =>
-      raw
-        .split(",")
-        .map((k) => k.trim())
-        .filter(Boolean)
-        .slice(0, 25),
-    ),
   maxPages: z.coerce.number().int().min(1).max(5).default(1),
   priority: z.coerce.number().int().min(0).max(999).default(0),
   notes: z.string().trim().max(2000).optional().or(z.literal("").transform(() => undefined)),

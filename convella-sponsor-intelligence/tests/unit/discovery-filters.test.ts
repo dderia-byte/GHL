@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { evaluateActivity, evaluateFilters, evaluateNiche } from "@/lib/discovery/filters";
+import { evaluateActivity, evaluateFilters } from "@/lib/discovery/filters";
 import { detectPromotionalSignals } from "@/lib/discovery/signals";
 import type { YouTubeChannelResource } from "@/lib/youtube/types";
 
@@ -20,64 +20,37 @@ function channel(overrides: Partial<YouTubeChannelResource> = {}): YouTubeChanne
 }
 
 const settings = { maxSubscribers: 800_000, allowHiddenSubscriberCounts: false };
-const noNiche = { nicheKeywords: [], nicheTopicIds: [] };
 
 describe("evaluateFilters", () => {
-  it("passes a channel under the subscriber cap with no niche configured", () => {
-    const outcome = evaluateFilters({ channel: channel(), niche: noNiche, settings });
-    expect(outcome.passed).toBe(true);
-    expect(outcome.nicheDecision?.method).toBe("none-configured");
+  it("passes a channel under the subscriber cap", () => {
+    expect(evaluateFilters({ channel: channel(), settings }).passed).toBe(true);
   });
 
   it("rejects a channel over the 800k cap", () => {
-    const outcome = evaluateFilters({ channel: channel({ subscriberCount: 800_001 }), niche: noNiche, settings });
+    const outcome = evaluateFilters({ channel: channel({ subscriberCount: 800_001 }), settings });
     expect(outcome).toMatchObject({ passed: false, rejectionReason: "SUBSCRIBERS_OVER_CAP" });
   });
 
   it("passes a channel exactly at the cap (boundary)", () => {
-    expect(evaluateFilters({ channel: channel({ subscriberCount: 800_000 }), niche: noNiche, settings }).passed).toBe(true);
+    expect(evaluateFilters({ channel: channel({ subscriberCount: 800_000 }), settings }).passed).toBe(true);
   });
 
   it("rejects hidden subscriber counts by default, allows them when configured", () => {
     const hidden = channel({ hiddenSubscriberCount: true, subscriberCount: null });
-    expect(evaluateFilters({ channel: hidden, niche: noNiche, settings })).toMatchObject({
+    expect(evaluateFilters({ channel: hidden, settings })).toMatchObject({
       passed: false,
       rejectionReason: "SUBSCRIBERS_HIDDEN",
     });
     expect(
-      evaluateFilters({ channel: hidden, niche: noNiche, settings: { ...settings, allowHiddenSubscriberCounts: true } })
-        .passed,
+      evaluateFilters({ channel: hidden, settings: { ...settings, allowHiddenSubscriberCounts: true } }).passed,
     ).toBe(true);
   });
 
-  it("rejects a niche mismatch with the decision recorded", () => {
-    const outcome = evaluateFilters({
-      channel: channel({ description: "A fictional cooking channel.", topicCategories: [] }),
-      niche: { nicheKeywords: ["coding", "developer"], nicheTopicIds: [] },
-      settings,
-    });
-    expect(outcome).toMatchObject({ passed: false, rejectionReason: "NICHE_MISMATCH" });
-    expect(outcome.nicheDecision?.passed).toBe(false);
-  });
-});
-
-describe("evaluateNiche", () => {
-  it("matches by topic category first", () => {
-    const decision = evaluateNiche(channel(), { nicheKeywords: [], nicheTopicIds: ["wiki/Technology"] });
-    expect(decision).toMatchObject({ method: "topic", passed: true });
-    expect(decision.matched).toHaveLength(1);
-  });
-
-  it("falls back to keyword matching with word boundaries", () => {
-    const decision = evaluateNiche(channel({ topicCategories: [] }), {
-      nicheKeywords: ["coding"],
-      nicheTopicIds: ["wiki/Music"],
-    });
-    expect(decision).toMatchObject({ method: "keyword", passed: true, matched: ["coding"] });
-    // "cod" must NOT match inside "coding" — word boundary required.
-    expect(
-      evaluateNiche(channel({ topicCategories: [] }), { nicheKeywords: ["cod"], nicheTopicIds: [] }).passed,
-    ).toBe(false);
+  it("never rejects on niche — the YouTube search text is the only niche definition", () => {
+    // A cooking channel found by a coding query is still returned: the search text
+    // already decided relevance, and a second keyword gate only loses creators.
+    const offTopic = channel({ description: "A fictional cooking channel.", topicCategories: [] });
+    expect(evaluateFilters({ channel: offTopic, settings }).passed).toBe(true);
   });
 });
 

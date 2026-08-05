@@ -146,8 +146,9 @@ model Channel {
   /// discovery run). Null on rows created before discovery existed = manual.
   discoverySource  String?
   discoveredAt     DateTime?
-  /// Resolved niche label recorded at qualification time (from the DiscoveryQuery's
-  /// niche configuration) — not a verified fact about the channel.
+  /// The YouTube search text that surfaced this channel — provenance, not a verified
+  /// fact about the channel. The creator's real niche is derived from their own
+  /// content in CreatorProfile.primaryNiche/nicheWeights.
   niche            String?
   /// "active" | "paused" — reserved hook for the continuous-monitoring roadmap.
   monitoringStatus String    @default("active")
@@ -510,6 +511,9 @@ model DiscoveryQuery {
   regionCode          String?
   relevanceLanguage   String?
   publishedWithinDays Int?
+  /// Retired: the niche filter was removed because it silently dropped relevant
+  /// creators whose title/description did not repeat the keyword. The queryText IS
+  /// the niche. Columns kept so historical rows are readable; nothing writes them.
   nicheKeywords       String[]  @default([])
   nicheTopicIds       String[]  @default([])
   maxPages            Int       @default(1)
@@ -599,6 +603,7 @@ model DiscoveryCandidate {
   /// human should look at rather than have silently discarded.
   borderline         Boolean          @default(false)
 
+  /// Retired alongside the niche filter — historical rows only, never written now.
   nicheDecision              Json?
   promotionalSignals         Json?
   subscriberCountAtDiscovery BigInt?

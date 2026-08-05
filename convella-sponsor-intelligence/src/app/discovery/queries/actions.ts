@@ -30,7 +30,6 @@ export async function createQueryAction(
       regionCode: data.regionCode,
       relevanceLanguage: data.relevanceLanguage,
       publishedWithinDays: data.publishedWithinDays,
-      nicheKeywords: data.nicheKeywords,
       maxPages: data.maxPages,
       priority: data.priority,
       notes: data.notes,

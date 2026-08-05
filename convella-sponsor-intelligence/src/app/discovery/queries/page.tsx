@@ -29,7 +29,7 @@ export default async function DiscoveryQueriesPage() {
         <EmptyState
           icon={Search}
           title="No search queries yet"
-          description="Add your first query above — for example a niche you want to find creators in."
+          description="Add your first query above — type it exactly as you would in the YouTube search bar."
         />
       ) : (
         <Card className="overflow-x-auto p-0">
@@ -38,7 +38,6 @@ export default async function DiscoveryQueriesPage() {
               <tr className="text-left text-xs font-medium uppercase tracking-wide text-muted-foreground">
                 <th className="px-5 py-3 font-medium">Search text</th>
                 <th className="px-2 py-3 font-medium">Type</th>
-                <th className="px-2 py-3 font-medium">Niche keywords</th>
                 <th className="px-2 py-3 font-medium">Quota / run</th>
                 <th className="px-2 py-3 font-medium">Last run</th>
                 <th className="px-2 py-3 font-medium">Results</th>
@@ -51,9 +50,6 @@ export default async function DiscoveryQueriesPage() {
                 <tr key={query.id} className="transition-colors hover:bg-muted/50">
                   <td className="px-5 py-3 font-medium text-foreground">“{query.queryText}”</td>
                   <td className="px-2 py-3 text-muted-foreground">{query.searchType}</td>
-                  <td className="px-2 py-3 text-xs text-muted-foreground">
-                    {query.nicheKeywords.length ? query.nicheKeywords.join(", ") : "—"}
-                  </td>
                   <td className="px-2 py-3 text-muted-foreground">{query.maxPages * 100} units</td>
                   <td className="px-2 py-3 text-muted-foreground">
                     {query.lastExecutedAt ? formatRelativeTime(query.lastExecutedAt) : "never"}

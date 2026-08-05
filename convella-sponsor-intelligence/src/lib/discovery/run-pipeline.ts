@@ -249,11 +249,7 @@ export async function processDiscoveryRunJob(jobId: string, discoveryRunId: stri
     }
 
     const query = queryById.get(channelRef.discoveryQueryId);
-    const outcome = evaluateFilters({
-      channel: resource,
-      niche: { nicheKeywords: query?.nicheKeywords ?? [], nicheTopicIds: query?.nicheTopicIds ?? [] },
-      settings,
-    });
+    const outcome = evaluateFilters({ channel: resource, settings });
 
     if (!outcome.passed) {
       await upsertCandidate({
@@ -263,7 +259,6 @@ export async function processDiscoveryRunJob(jobId: string, discoveryRunId: stri
         rejectionReason: outcome.rejectionReason,
         rejectionExpiresAt: new Date(Date.now() + cooldownMs),
         detail: outcome.detail,
-        nicheDecision: outcome.nicheDecision,
         subscriberCount: resource.subscriberCount,
       });
       candidatesRejected += 1;
@@ -295,7 +290,6 @@ export async function processDiscoveryRunJob(jobId: string, discoveryRunId: stri
         channelId: channelRow.id,
         state: "PENDING_ANALYSIS",
         previouslySeen: previouslySeenIds.has(channelRef.youtubeChannelId),
-        nicheDecision: outcome.nicheDecision ? JSON.parse(JSON.stringify(outcome.nicheDecision)) : undefined,
         subscriberCountAtDiscovery: resource.subscriberCount !== null ? BigInt(resource.subscriberCount) : null,
       },
     });
@@ -346,7 +340,6 @@ export async function processDiscoveryRunJob(jobId: string, discoveryRunId: stri
     rejectionReason: RejectionReason | null;
     rejectionExpiresAt: Date | null;
     detail: string;
-    nicheDecision?: unknown;
     subscriberCount?: number | null;
   }) {
     const candidate = await prisma.discoveryCandidate.upsert({
@@ -365,7 +358,6 @@ export async function processDiscoveryRunJob(jobId: string, discoveryRunId: stri
         state: options.state,
         rejectionReason: options.rejectionReason,
         rejectionExpiresAt: options.rejectionExpiresAt,
-        nicheDecision: options.nicheDecision ? JSON.parse(JSON.stringify(options.nicheDecision)) : undefined,
         subscriberCountAtDiscovery:
           options.subscriberCount !== null && options.subscriberCount !== undefined
             ? BigInt(options.subscriberCount)
