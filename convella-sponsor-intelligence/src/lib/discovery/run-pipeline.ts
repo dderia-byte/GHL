@@ -52,6 +52,9 @@ export async function processDiscoveryRunJob(jobId: string, discoveryRunId: stri
   // --- Search phase (quota-guarded) -------------------------------------------
   const discovered = new Map<string, DiscoveredChannel>(); // intra-run dedup: first query wins provenance
   let quotaUnitsUsed = 0;
+  // A search hit for a channel this run has already seen — under another keyword, or
+  // on an earlier page. Counted, never rejected.
+  let sameRunDuplicatesMerged = 0;
 
   for (const query of queries) {
     // Re-spend guard: an identical query executed very recently returns near-identical
@@ -110,13 +113,15 @@ export async function processDiscoveryRunJob(jobId: string, discoveryRunId: stri
 
         for (const item of result.results) {
           resultCount += 1;
-          if (!discovered.has(item.channelId)) {
-            discovered.set(item.channelId, {
-              youtubeChannelId: item.channelId,
-              channelTitle: item.channelTitle,
-              discoveryQueryId: query.id,
-            });
+          if (discovered.has(item.channelId)) {
+            sameRunDuplicatesMerged += 1;
+            continue;
           }
+          discovered.set(item.channelId, {
+            youtubeChannelId: item.channelId,
+            channelTitle: item.channelTitle,
+            discoveryQueryId: query.id,
+          });
         }
 
         nextCursors[query.id] = result.nextPageToken;
@@ -190,7 +195,11 @@ export async function processDiscoveryRunJob(jobId: string, discoveryRunId: stri
       exportedChannelIds: exportedSet,
       cooldownRejectedIds: cooldownSet,
     });
-    if (disposition.action === "MERGE") continue; // already a candidate in this run
+    if (disposition.action === "MERGE") {
+      // Already a candidate in this run (earlier pass): merged, not rejected.
+      sameRunDuplicatesMerged += 1;
+      continue;
+    }
     if (disposition.action === "SKIP") {
       duplicateFiltered.push({ channel, reason: disposition.reason, detail: disposition.detail });
       continue;
@@ -334,7 +343,12 @@ export async function processDiscoveryRunJob(jobId: string, discoveryRunId: stri
       candidatesCreated: { increment: candidatesCreated },
       candidatesRejected: { increment: candidatesRejected },
       candidatesAnalysed: { increment: candidatesCreated },
-      duplicatesSkipped: { increment: duplicateFiltered.filter((d) => d.reason === "DUPLICATE_KNOWN").length },
+      duplicatesSkipped: { increment: duplicateFiltered.length },
+      sameRunDuplicatesMerged: { increment: sameRunDuplicatesMerged },
+      previouslyQualifiedSkipped: {
+        increment: duplicateFiltered.filter((d) => d.reason === "DUPLICATE_KNOWN").length,
+      },
+      cooldownSkipped: { increment: duplicateFiltered.filter((d) => d.reason === "DUPLICATE_REJECTED").length },
       quotaUnitsUsed: { increment: quotaUnitsUsed },
       searchCursors: JSON.parse(JSON.stringify({ tokens: nextCursors, exhausted: searchExhausted })),
     },
@@ -348,7 +362,15 @@ export async function processDiscoveryRunJob(jobId: string, discoveryRunId: stri
     action: "discovery.run.search_completed",
     entityType: "DiscoveryRun",
     entityId: discoveryRunId,
-    detail: { channelsDiscovered: discovered.size, candidatesCreated, candidatesRejected, quotaUnitsUsed },
+    detail: {
+      channelsDiscovered: discovered.size,
+      candidatesCreated,
+      candidatesRejected,
+      quotaUnitsUsed,
+      sameRunDuplicatesMerged,
+      previouslyQualifiedSkipped: duplicateFiltered.filter((d) => d.reason === "DUPLICATE_KNOWN").length,
+      cooldownSkipped: duplicateFiltered.filter((d) => d.reason === "DUPLICATE_REJECTED").length,
+    },
   });
 
   // No new candidates this pass: let the shared finalisation logic decide whether to

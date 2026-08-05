@@ -2,6 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getDiscoveryRunDetail } from "@/lib/discovery/queries";
 import { parseSettingsSnapshot } from "@/lib/discovery/service";
+import { MAX_VIDEOS_PER_CREATOR } from "@/lib/discovery/sponsor-qualification";
 import { PageHeader, Card } from "@/components/ui/card";
 import { CandidateStateBadge, DiscoveryRunStatusBadge } from "@/components/ui/badge";
 import { AutoRefresh } from "@/components/auto-refresh";
@@ -46,13 +47,34 @@ export default async function DiscoveryRunDetailPage(props: { params: Promise<{ 
       </Card>
 
       <Card>
+        <h2 className="text-sm font-semibold text-foreground">Duplicate handling</h2>
+        <dl className="mt-4 grid grid-cols-1 gap-4 text-sm sm:grid-cols-3">
+          <Stat
+            label="Merged (same run)"
+            value={run.sameRunDuplicatesMerged}
+            hint="Same channel found under more than one keyword. Analysed once, exported once — not a rejection."
+          />
+          <Stat
+            label="Skipped — already exported"
+            value={run.previouslyQualifiedSkipped}
+            hint="Qualified and exported by a previous run, so not generated again."
+          />
+          <Stat
+            label="Skipped — cooldown"
+            value={run.cooldownSkipped}
+            hint="Rejected by a previous run. Eligible again once the cooldown expires."
+          />
+        </dl>
+      </Card>
+
+      <Card>
         <details>
           <summary className="cursor-pointer text-sm font-semibold text-foreground">
             Limits this run executed under (snapshot at start)
           </summary>
           <dl className="mt-4 grid grid-cols-2 gap-4 text-sm sm:grid-cols-4">
             <Stat label="Max creators" value={snapshot.maxCreatorsPerRun} />
-            <Stat label="Deep-scan videos" value={snapshot.deepScanVideoCount} />
+            <Stat label="Videos per creator" value={MAX_VIDEOS_PER_CREATOR} />
             <Stat label="Subscriber cap" value={snapshot.maxSubscribers.toLocaleString()} />
             <Stat label="Max video age" value={`${snapshot.maxVideoAgeDays}d`} />
             <Stat label="Per-run cost limit" value={`$${snapshot.perRunCostLimitUsd.toFixed(2)}`} />
@@ -114,7 +136,7 @@ export default async function DiscoveryRunDetailPage(props: { params: Promise<{ 
                   </td>
                   <td className="px-2 py-3 text-muted-foreground">
                     {candidate.deepScanVideoIds.length > 0
-                      ? `${candidate.deepScanCursor}/${Math.min(candidate.deepScanVideoIds.length, snapshot.deepScanVideoCount)}`
+                      ? `${candidate.deepScanCursor}/${Math.min(candidate.deepScanVideoIds.length, MAX_VIDEOS_PER_CREATOR)}`
                       : "—"}
                   </td>
                   <td className="px-5 py-3 text-right text-muted-foreground">${Number(candidate.estimatedCost).toFixed(2)}</td>
@@ -144,11 +166,12 @@ export default async function DiscoveryRunDetailPage(props: { params: Promise<{ 
   );
 }
 
-function Stat({ label, value }: { label: string; value: string | number }) {
+function Stat({ label, value, hint }: { label: string; value: string | number; hint?: string }) {
   return (
     <div>
       <dt className="text-xs text-muted-foreground">{label}</dt>
       <dd className="mt-0.5 font-semibold text-foreground">{value}</dd>
+      {hint && <p className="mt-1 text-xs font-normal text-muted-foreground">{hint}</p>}
     </div>
   );
 }

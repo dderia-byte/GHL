@@ -16,7 +16,10 @@ import {
   addUniqueSponsor,
   countsAsExternalPaidSponsor,
   evaluateQualification,
+  mergeSponsorEvidence,
   mergeSponsorLists,
+  youtubeVideoUrl,
+  type SponsorEvidenceEntry,
 } from "./sponsor-qualification";
 
 /**
@@ -141,17 +144,22 @@ export async function processCreatorQualificationJob(jobId: string, candidateId:
           const result = await analyseCandidateVideo(jobId, candidateId, cursor, settings);
           if (result.yielded) return;
 
-          // Record any newly-confirmed EXTERNAL PAID sponsors from this video.
-          const sponsors = await collectConfirmedSponsors(fresh.deepScanVideoIds[cursor]);
+          // Record any newly-confirmed EXTERNAL PAID sponsors from this video, plus
+          // which video proved each one (kept in SQL only, never in the CSV).
+          const found = await collectConfirmedSponsors(fresh.deepScanVideoIds[cursor]);
           let uniqueSponsors = fresh.uniqueSponsors;
-          for (const brand of sponsors) {
-            const next = addUniqueSponsor(uniqueSponsors, brand);
-            uniqueSponsors = next.sponsors;
+          for (const entry of found) {
+            uniqueSponsors = addUniqueSponsor(uniqueSponsors, entry.brand).sponsors;
           }
+          const sponsorEvidence = mergeSponsorEvidence(parseSponsorEvidence(fresh.sponsorEvidence), found);
 
           await prisma.discoveryCandidate.update({
             where: { id: candidateId },
-            data: { deepScanCursor: cursor + 1, uniqueSponsors },
+            data: {
+              deepScanCursor: cursor + 1,
+              uniqueSponsors,
+              sponsorEvidence: JSON.parse(JSON.stringify(sponsorEvidence)),
+            },
           });
           await prisma.discoveryRun.update({
             where: { id: run.id },
@@ -172,16 +180,29 @@ export async function processCreatorQualificationJob(jobId: string, candidateId:
         }
 
         if (fresh.channelId) {
-          await persistQualifiedCreator(fresh.channelId, fresh.uniqueSponsors);
+          await persistQualifiedCreator({
+            channelId: fresh.channelId,
+            candidateId,
+            discoveryRunId: run.id,
+            sponsors: fresh.uniqueSponsors,
+            sponsorEvidence: parseSponsorEvidence(fresh.sponsorEvidence),
+          });
+          // Profile build refines the niche label; it is best-effort and deliberately
+          // OUTSIDE the transaction (it does its own heavy reads). The creator already
+          // has a niche from the search text, so a failure here never leaves the CSV
+          // with a missing row — only a coarser Niche cell.
           await buildCreatorProfile(fresh.channelId).catch((error) => {
             console.error(`[discovery] profile build failed for channel ${fresh.channelId}`, error);
           });
+        } else {
+          // No Channel row means nothing to export; still finish the candidate.
+          await transition(candidateId, "DEEP_SCANNING", "COMPLETED");
+          await prisma.discoveryRun.update({
+            where: { id: run.id },
+            data: { creatorsQualified: { increment: 1 }, qualifiedCount: { increment: 1 } },
+          });
         }
 
-        await prisma.discoveryRun.update({
-          where: { id: run.id },
-          data: { creatorsQualified: { increment: 1 }, qualifiedCount: { increment: 1 } },
-        });
         await recordAudit({
           actorType: "worker",
           action: "discovery.candidate.qualified",
@@ -190,7 +211,6 @@ export async function processCreatorQualificationJob(jobId: string, candidateId:
           detail: { sponsors: fresh.uniqueSponsors, videosAnalysed: fresh.deepScanCursor },
         });
 
-        await transition(candidateId, "DEEP_SCANNING", "COMPLETED");
         await completeJob(jobId);
         await finalizeRunIfDone(run.id);
         return;
@@ -216,17 +236,25 @@ export async function processCreatorQualificationJob(jobId: string, candidateId:
 }
 
 /**
- * Reads the confirmed EXTERNAL PAID sponsor brand names from one analysed video.
- * Affiliate-only promotions, organic mentions, gifted products, unclear mentions and
- * the creator's own products are all excluded (see sponsor-qualification.ts).
+ * Reads the confirmed EXTERNAL PAID sponsors from one analysed video, together with
+ * the video they were found in. Affiliate-only promotions, organic mentions, gifted
+ * products, unclear mentions and the creator's own products are all excluded (see
+ * sponsor-qualification.ts). The video provenance is stored in SQL for drill-down —
+ * it is never exported to the five-column CSV.
  */
-async function collectConfirmedSponsors(videoDbId: string): Promise<string[]> {
-  const detections = await prisma.sponsorshipDetection.findMany({
-    where: { videoId: videoDbId },
-    include: { brand: { select: { displayName: true } } },
-  });
+async function collectConfirmedSponsors(videoDbId: string): Promise<SponsorEvidenceEntry[]> {
+  const [video, detections] = await Promise.all([
+    prisma.video.findUniqueOrThrow({
+      where: { id: videoDbId },
+      select: { youtubeVideoId: true, publishedAt: true },
+    }),
+    prisma.sponsorshipDetection.findMany({
+      where: { videoId: videoDbId },
+      include: { brand: { select: { displayName: true } } },
+    }),
+  ]);
 
-  const confirmed: string[] = [];
+  const confirmed: SponsorEvidenceEntry[] = [];
   for (const detection of detections) {
     const brandName = detection.brand?.displayName ?? detection.rawBrandName;
     const verdict = countsAsExternalPaidSponsor({
@@ -238,22 +266,48 @@ async function collectConfirmedSponsors(videoDbId: string): Promise<string[]> {
       reasoningSummary: detection.reasoningSummary,
       sponsorshipConfirmed: detection.sponsorshipConfirmed,
     });
-    if (verdict.counts) confirmed.push(brandName);
+    if (!verdict.counts) continue;
+    confirmed.push({
+      brand: brandName,
+      youtubeVideoId: video.youtubeVideoId,
+      videoUrl: youtubeVideoUrl(video.youtubeVideoId),
+      publishedAt: video.publishedAt ? video.publishedAt.toISOString() : null,
+    });
   }
   return confirmed;
 }
 
 /**
- * Writes the qualified-creator record that makes this channel permanently skippable
- * by future runs and exportable to the CSV. Done in a transaction so a later failure
- * cannot leave a half-written creator that is neither skippable nor exportable.
+ * Commits the qualified creator. Everything that decides whether this creator is
+ * BOTH permanently skippable AND present in the completed export happens in ONE
+ * transaction:
  *
- * Sponsors are MERGED, never replaced: if the same channel was reached twice (found
- * under two search keywords, or re-analysed after a resume) the union of confirmed
- * sponsors is what the creator record should hold. `qualifiedAt` is likewise only
- * set once, so the "first exported by run X" fact survives.
+ *   - Channel.qualifiedAt        — the permanent skip rule
+ *   - confirmedSponsorBrands     — merged, never replaced
+ *   - latestEligibleVideoAt      — the CSV date column
+ *   - sponsorEvidence            — internal per-sponsor video provenance
+ *   - candidate → COMPLETED      — run-export membership (?runId= filters on this)
+ *   - run qualified counters     — the summary the operator reads
+ *
+ * Before this was atomic, a crash between marking the channel qualified and marking
+ * the candidate COMPLETED produced the worst possible outcome: a creator permanently
+ * skipped by every future run, yet missing from the export of the run that found
+ * them. Now either all of it lands or none of it does.
+ *
+ * Sponsors are MERGED because the same channel may be reached more than once (two
+ * keywords, or a resumed job); `qualifiedAt` is only ever set once, so "first
+ * exported by run X" survives.
  */
-async function persistQualifiedCreator(channelId: string, sponsors: string[]): Promise<void> {
+async function persistQualifiedCreator(options: {
+  channelId: string;
+  candidateId: string;
+  discoveryRunId: string;
+  sponsors: string[];
+  sponsorEvidence: SponsorEvidenceEntry[];
+}): Promise<void> {
+  const { channelId, candidateId, discoveryRunId, sponsors, sponsorEvidence } = options;
+
+  // Read-only lookup, safe to do before the transaction opens.
   const newestEligible = await prisma.video.findFirst({
     where: {
       channelId,
@@ -267,16 +321,46 @@ async function persistQualifiedCreator(channelId: string, sponsors: string[]): P
 
   await prisma.$transaction(async (tx) => {
     const channel = await tx.channel.findUniqueOrThrow({ where: { id: channelId } });
+    const existingEvidence = parseSponsorEvidence(channel.sponsorEvidence);
+
     await tx.channel.update({
       where: { id: channelId },
       data: {
         qualifiedAt: channel.qualifiedAt ?? new Date(),
         confirmedSponsorBrands: mergeSponsorLists(channel.confirmedSponsorBrands, sponsors),
-        latestEligibleVideoAt: newestEligible?.publishedAt ?? null,
+        latestEligibleVideoAt: newestEligible?.publishedAt ?? channel.latestEligibleVideoAt,
+        sponsorEvidence: JSON.parse(JSON.stringify(mergeSponsorEvidence(existingEvidence, sponsorEvidence))),
         discoveredAt: channel.discoveredAt ?? new Date(),
       },
     });
+
+    // Export membership for this run. Guarded on the expected state so a concurrent
+    // writer cannot double-count the run totals.
+    const moved = await tx.discoveryCandidate.updateMany({
+      where: { id: candidateId, state: "DEEP_SCANNING" },
+      data: { state: "COMPLETED" },
+    });
+    if (moved.count !== 1) {
+      throw new Error(`Stale candidate state: expected DEEP_SCANNING for ${candidateId} (concurrent transition?)`);
+    }
+
+    await tx.discoveryRun.update({
+      where: { id: discoveryRunId },
+      data: { creatorsQualified: { increment: 1 }, qualifiedCount: { increment: 1 } },
+    });
   });
+}
+
+/** Reads a stored `SponsorEvidenceEntry[]` JSON column defensively. */
+function parseSponsorEvidence(raw: unknown): SponsorEvidenceEntry[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.filter(
+    (entry): entry is SponsorEvidenceEntry =>
+      typeof entry === "object" &&
+      entry !== null &&
+      typeof (entry as SponsorEvidenceEntry).brand === "string" &&
+      typeof (entry as SponsorEvidenceEntry).youtubeVideoId === "string",
+  );
 }
 
 /** Optimistic state transition/** Optimistic state transition — fails loudly if another writer moved the candidate first. */

@@ -50,13 +50,6 @@ export const SETTING_DEFINITIONS = {
     envFallback: "DISCOVERY_MAX_CONCURRENT_CREATORS",
     description: "Creators processed in parallel within a run (1 until the queue supports more).",
   }),
-  "discovery.deepScanVideoCount": def({
-    key: "discovery.deepScanVideoCount",
-    schema: z.number().int().min(1).max(10),
-    defaultValue: 5,
-    envFallback: "DISCOVERY_DEEP_SCAN_VIDEO_COUNT",
-    description: "Latest-video count analysed after a creator qualifies.",
-  }),
   "discovery.maxSubscribers": def({
     key: "discovery.maxSubscribers",
     schema: z.number().int().min(1),
@@ -80,9 +73,10 @@ export const SETTING_DEFINITIONS = {
   "discovery.rejectionCooldownDays": def({
     key: "discovery.rejectionCooldownDays",
     schema: z.number().int().min(0).max(3650),
-    defaultValue: 90,
+    defaultValue: 30,
     envFallback: "DISCOVERY_REJECTION_COOLDOWN_DAYS",
-    description: "Days a rejected channel is skipped as a duplicate before it may be re-discovered.",
+    description:
+      "Days a rejected channel is skipped before it may be analysed again. Kept short (30) because a creator with no sponsor today may have signed one next month.",
   }),
   "discovery.maxPagesPerQuery": def({
     key: "discovery.maxPagesPerQuery",
@@ -91,14 +85,6 @@ export const SETTING_DEFINITIONS = {
     envFallback: "DISCOVERY_MAX_PAGES_PER_QUERY",
     description:
       "search.list pages per query per run (each page = up to 50 results but far fewer unique channels, and costs 100 quota units).",
-  }),
-  "discovery.maxGatingPaidVideos": def({
-    key: "discovery.maxGatingPaidVideos",
-    schema: z.number().int().min(0).max(5),
-    defaultValue: 2,
-    envFallback: "DISCOVERY_MAX_GATING_PAID_VIDEOS",
-    description:
-      "How many signal-bearing videos may be analysed (paid) to qualify a creator after the free description gate finds no outright disclosure.",
   }),
   "discovery.minIntervalHours": def({
     key: "discovery.minIntervalHours",
@@ -141,13 +127,11 @@ export interface DiscoverySettingsSnapshot {
   maxCandidatesPerRun: number;
   maxCreatorsPerRun: number;
   maxConcurrentCreators: number;
-  deepScanVideoCount: number;
   maxSubscribers: number;
   allowHiddenSubscriberCounts: boolean;
   maxVideoAgeDays: number;
   rejectionCooldownDays: number;
   maxPagesPerQuery: number;
-  maxGatingPaidVideos: number;
   minIntervalHours: number;
   dailyCostLimitUsd: number;
   perRunCostLimitUsd: number;

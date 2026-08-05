@@ -32,8 +32,6 @@ export const discoverySettingsFormSchema = z.object({
   dailyQuotaUnits: z.coerce.number().int().min(0).max(1_000_000),
   maxCreatorsPerRun: z.coerce.number().int().min(1).max(100),
   maxPagesPerQuery: z.coerce.number().int().min(1).max(10),
-  maxGatingPaidVideos: z.coerce.number().int().min(0).max(5),
-  deepScanVideoCount: z.coerce.number().int().min(1).max(10),
   maxSubscribers: z.coerce.number().int().min(1),
   maxVideoAgeDays: z.coerce.number().int().min(1).max(3650),
   rejectionCooldownDays: z.coerce.number().int().min(0).max(3650),

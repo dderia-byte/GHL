@@ -188,6 +188,34 @@ export function addUniqueSponsor(existing: string[], brandName: string): { spons
 }
 
 /**
+ * Where one confirmed sponsor was found. Stored in SQL for internal drill-down —
+ * deliberately NOT part of the five-column CSV.
+ */
+export interface SponsorEvidenceEntry {
+  brand: string;
+  youtubeVideoId: string;
+  videoUrl: string;
+  publishedAt: string | null;
+}
+
+export function youtubeVideoUrl(youtubeVideoId: string): string {
+  return `https://www.youtube.com/watch?v=${youtubeVideoId}`;
+}
+
+/** Merges evidence entries, keeping the first video that proved each brand. */
+export function mergeSponsorEvidence(...lists: SponsorEvidenceEntry[][]): SponsorEvidenceEntry[] {
+  const byBrand = new Map<string, SponsorEvidenceEntry>();
+  for (const list of lists) {
+    for (const entry of list) {
+      const key = normaliseSponsorKey(entry.brand);
+      if (!key || byBrand.has(key)) continue;
+      byBrand.set(key, entry);
+    }
+  }
+  return Array.from(byBrand.values());
+}
+
+/**
  * Merges two sponsor lists for the same creator, keeping first-seen display names.
  * Used when a channel is discovered under more than one search keyword and its
  * evidence has to be combined into a single creator record.

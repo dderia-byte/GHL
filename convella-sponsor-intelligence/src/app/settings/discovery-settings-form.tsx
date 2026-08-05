@@ -13,8 +13,6 @@ export interface DiscoverySettingsFormValues {
   dailyQuotaUnits: number;
   maxCreatorsPerRun: number;
   maxPagesPerQuery: number;
-  maxGatingPaidVideos: number;
-  deepScanVideoCount: number;
   maxSubscribers: number;
   maxVideoAgeDays: number;
   rejectionCooldownDays: number;
@@ -32,15 +30,13 @@ const FIELDS: { name: NumericSettingKey; label: string; hint?: string; step?: st
     label: "Search pages per query",
     hint: "1–10. Each page = up to 50 results (far fewer unique channels) and costs 100 quota units. Raise for more creators.",
   },
-  {
-    name: "maxGatingPaidVideos",
-    label: "Paid videos per qualification attempt",
-    hint: "0–5. Videos analysed to qualify a creator when the free description scan finds no outright disclosure. 0 = free-gate only (zero cost).",
-  },
-  { name: "deepScanVideoCount", label: "Videos scanned per creator", hint: "1–10 — also the size of the free description gate" },
   { name: "maxSubscribers", label: "Subscriber cap", hint: "Channels above this are filtered out" },
   { name: "maxVideoAgeDays", label: "Max age of newest upload (days)", hint: "Older channels are rejected as inactive" },
-  { name: "rejectionCooldownDays", label: "Rejection cooldown (days)", hint: "Rejected channels can be re-discovered after this" },
+  {
+    name: "rejectionCooldownDays",
+    label: "Rejection cooldown (days)",
+    hint: "Rejected creators are re-analysed after this many days — they may have signed a sponsor since.",
+  },
 ];
 
 export function DiscoverySettingsForm({ values }: { values: DiscoverySettingsFormValues }) {

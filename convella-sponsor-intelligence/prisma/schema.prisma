@@ -162,6 +162,10 @@ model Channel {
   confirmedSponsorBrands  String[]  @default([])
   /// Publish date of the newest ELIGIBLE long-form video (not the sponsor video).
   latestEligibleVideoAt   DateTime?
+  /// Per-sponsor provenance kept for internal drill-down only — never exported to
+  /// the five-column CSV. `SponsorEvidenceEntry[]`: which video each confirmed
+  /// sponsor was found in (youtubeVideoId, videoUrl, publishedAt).
+  sponsorEvidence         Json?
 
   createdAt        DateTime  @default(now())
   updatedAt        DateTime  @updatedAt
@@ -555,8 +559,18 @@ model DiscoveryRun {
   // --- Run summary counters (spec: final run summary) ------------------------
   /// Candidates that reached analysis (excludes duplicates skipped up front).
   candidatesAnalysed Int @default(0)
-  /// Creators skipped because their channel id already exists in the database.
+  /// Legacy total of skipped duplicates — kept so historical runs still read
+  /// correctly. New runs also fill the three precise counters below.
   duplicatesSkipped  Int @default(0)
+  /// Search hits collapsed into an existing candidate because the same channel id
+  /// was already found (another keyword, or an earlier pass of this run). NOT a
+  /// rejection: the creator is analysed once and exported once.
+  sameRunDuplicatesMerged   Int @default(0)
+  /// Channels skipped because a PREVIOUS run already qualified and exported them.
+  previouslyQualifiedSkipped Int @default(0)
+  /// Channels skipped because a previous run rejected them and the cooldown is
+  /// still active.
+  cooldownSkipped           Int @default(0)
   /// Creators analysed but rejected for having no confirmed sponsor.
   rejectedNoSponsor  Int @default(0)
   /// Qualified creators collected by this run (target: 30).
@@ -615,6 +629,9 @@ model DiscoveryCandidate {
   deepScanCursor   Int      @default(0)
   /// Unique confirmed external paid sponsors found so far (max 2).
   uniqueSponsors   String[] @default([])
+  /// `SponsorEvidenceEntry[]` — per-sponsor video provenance accumulated during
+  /// analysis so a resumed job keeps it. Copied onto the Channel on qualification.
+  sponsorEvidence  Json?
   /// True when this channel was ALREADY known (in the database, or rejected by an
   /// earlier run) at the moment this candidate was created. Surfaced as the CSV's
   /// "Duplicate" column so previously-seen creators can be included in a run and

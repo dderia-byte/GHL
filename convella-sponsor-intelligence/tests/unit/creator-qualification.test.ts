@@ -4,8 +4,10 @@ import {
   countsAsExternalPaidSponsor,
   evaluateQualification,
   looksCreatorOwned,
+  mergeSponsorEvidence,
   mergeSponsorLists,
   normaliseSponsorKey,
+  youtubeVideoUrl,
   type SponsorCandidateDetection,
 } from "@/lib/discovery/sponsor-qualification";
 import { classifyDiscovery, mergeDiscoveriesByChannel } from "@/lib/discovery/duplicate-policy";
@@ -383,5 +385,46 @@ describe("Qualified creators CSV", () => {
       { channelName: "A", youtubeChannelId: "UC1", sponsorBrands: ["X"], latestEligibleVideoAt: null },
     ]);
     expect(csv.split("\r\n")[1]).toBe("A,https://www.youtube.com/channel/UC1,,X,");
+  });
+});
+
+// --- Sponsor evidence (stored in SQL, never in the CSV) ---------------------
+describe("Sponsor video evidence", () => {
+  const entry = (brand: string, videoId: string, publishedAt: string | null = "2026-08-03T00:00:00.000Z") => ({
+    brand,
+    youtubeVideoId: videoId,
+    videoUrl: youtubeVideoUrl(videoId),
+    publishedAt,
+  });
+
+  it("builds a watchable URL from the video id", () => {
+    expect(youtubeVideoUrl("dQw4w9WgXcQ")).toBe("https://www.youtube.com/watch?v=dQw4w9WgXcQ");
+  });
+
+  it("keeps one entry per brand — the video that first proved it", () => {
+    const merged = mergeSponsorEvidence(
+      [entry("Convex", "vid1")],
+      [entry("Convex", "vid3"), entry("Browserbase", "vid2")],
+    );
+    expect(merged.map((e) => e.brand)).toEqual(["Convex", "Browserbase"]);
+    expect(merged[0].youtubeVideoId).toBe("vid1"); // first proof wins
+  });
+
+  it("collapses domain variants onto the same brand entry", () => {
+    const merged = mergeSponsorEvidence([entry("PostHog", "vid1")], [entry("posthog.com", "vid2")]);
+    expect(merged).toHaveLength(1);
+  });
+
+  it("records the publish date, or null when YouTube did not give one", () => {
+    const merged = mergeSponsorEvidence([entry("Convex", "vid1", null)]);
+    expect(merged[0].publishedAt).toBeNull();
+  });
+
+  it("never leaks into the CSV — the export takes brand names only", () => {
+    const csv = buildQualifiedCreatorsCsv([
+      { channelName: "A", youtubeChannelId: "UC1", sponsorBrands: ["Convex"], latestEligibleVideoAt: null },
+    ]);
+    expect(csv).not.toContain("watch?v=");
+    expect(csv.split("\r\n")[0]).toBe("YouTuber Name,Channel URL,Niche,Sponsor Brands,Latest Video Date");
   });
 });
