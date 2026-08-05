@@ -19,11 +19,13 @@ export async function GET(request: Request) {
     select: {
       name: true,
       youtubeChannelId: true,
+      handle: true,
       confirmedSponsorBrands: true,
       latestEligibleVideoAt: true,
-      // Any candidate flagged previouslySeen means this creator was already known
-      // before the run that surfaced them.
-      discoveryCandidates: { select: { previouslySeen: true } },
+      // Niche comes from the creator's own content (CreatorProfile), not from the
+      // search text that happened to surface them.
+      profile: { select: { primaryNiche: true } },
+      niche: true,
     },
   });
 
@@ -31,9 +33,10 @@ export async function GET(request: Request) {
     channels.map((c) => ({
       channelName: c.name,
       youtubeChannelId: c.youtubeChannelId,
+      handle: c.handle,
+      niche: c.profile?.primaryNiche ?? c.niche,
       sponsorBrands: c.confirmedSponsorBrands,
       latestEligibleVideoAt: c.latestEligibleVideoAt,
-      previouslySeen: c.discoveryCandidates.some((candidate) => candidate.previouslySeen),
     })),
   );
 

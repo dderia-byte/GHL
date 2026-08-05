@@ -16,12 +16,13 @@ import {
   addUniqueSponsor,
   countsAsExternalPaidSponsor,
   evaluateQualification,
+  mergeSponsorLists,
 } from "./sponsor-qualification";
 
 /**
  * Uploads fetched per creator before eligibility filtering. Over-fetching means a
  * channel that posts Shorts or streams between long-form videos still yields the
- * five eligible videos the rules allow, without a second API round-trip.
+ * four eligible videos the rules allow, without a second API round-trip.
  */
 const UPLOAD_FETCH_COUNT = 20;
 
@@ -75,10 +76,11 @@ export async function processCreatorQualificationJob(jobId: string, candidateId:
         continue;
       }
 
-      // Sequential per-video analysis with the qualification stopping rules:
-      // stop at two unique confirmed sponsors; reject once four videos have produced
-      // none; never analyse more than five. Each video goes through the existing
-      // three-stage pipeline, which is free when the description already discloses.
+      // Sequential per-video analysis over the newest four eligible long-form videos:
+      // every one of the four is analysed so all unique sponsors are found, then the
+      // creator qualifies with >=1 sponsor or is rejected. Never a fifth video. Each
+      // video goes through the existing three-stage pipeline, which is free when the
+      // description already discloses the sponsorship.
       case "ANALYSING_NEWEST":
       case "CHECKING_SIGNALS":
       case "ANALYSING_SECOND": {
@@ -245,6 +247,11 @@ async function collectConfirmedSponsors(videoDbId: string): Promise<string[]> {
  * Writes the qualified-creator record that makes this channel permanently skippable
  * by future runs and exportable to the CSV. Done in a transaction so a later failure
  * cannot leave a half-written creator that is neither skippable nor exportable.
+ *
+ * Sponsors are MERGED, never replaced: if the same channel was reached twice (found
+ * under two search keywords, or re-analysed after a resume) the union of confirmed
+ * sponsors is what the creator record should hold. `qualifiedAt` is likewise only
+ * set once, so the "first exported by run X" fact survives.
  */
 async function persistQualifiedCreator(channelId: string, sponsors: string[]): Promise<void> {
   const newestEligible = await prisma.video.findFirst({
@@ -264,7 +271,7 @@ async function persistQualifiedCreator(channelId: string, sponsors: string[]): P
       where: { id: channelId },
       data: {
         qualifiedAt: channel.qualifiedAt ?? new Date(),
-        confirmedSponsorBrands: sponsors,
+        confirmedSponsorBrands: mergeSponsorLists(channel.confirmedSponsorBrands, sponsors),
         latestEligibleVideoAt: newestEligible?.publishedAt ?? null,
         discoveredAt: channel.discoveredAt ?? new Date(),
       },

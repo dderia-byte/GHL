@@ -1,37 +1,85 @@
 import { toCsv } from "./csv";
+import { normaliseSponsorKey } from "@/lib/discovery/sponsor-qualification";
 
 /**
- * The qualified-creators CSV: five columns, one row per creator, no explanations.
- * Deliberately minimal — this file is a working list, not a report.
+ * The qualified-creators CSV: five columns, exactly one row per creator, no
+ * explanations. Deliberately minimal — this file is a working outreach list, not a
+ * report. There is no duplicate column: a creator either belongs in the file once,
+ * or was already exported by an earlier run and is not in it at all.
  */
 
 export interface QualifiedCreatorRecord {
   channelName: string;
   youtubeChannelId: string;
+  /** @ handle when YouTube exposes one — the URL people actually recognise. */
+  handle?: string | null;
+  /** One concise primary category, derived from the creator's own content. */
+  niche?: string | null;
+  /** Every unique confirmed sponsor found across the analysed video window. */
   sponsorBrands: string[];
   latestEligibleVideoAt: Date | null;
-  /**
-   * True when this creator was already in the database (or had been rejected by an
-   * earlier run) before the run that produced this row. Surfaced so nobody is
-   * silently dropped on an older run's judgement — filter the column by hand.
-   */
-  previouslySeen?: boolean;
 }
 
-const HEADERS = ["YouTuber Name", "Channel URL", "Sponsor Brands", "Latest Video Date", "Duplicate"];
+const HEADERS = ["YouTuber Name", "Channel URL", "Niche", "Sponsor Brands", "Latest Video Date"];
 
 export function formatVideoDate(date: Date | null): string {
   return date ? date.toISOString().slice(0, 10) : "";
 }
 
+/** Prefers the handle URL (youtube.com/@name), falls back to the channel-id URL. */
+export function channelUrl(youtubeChannelId: string, handle?: string | null): string {
+  const trimmed = handle?.trim();
+  if (trimmed) return `https://www.youtube.com/${trimmed.startsWith("@") ? trimmed : `@${trimmed}`}`;
+  return `https://www.youtube.com/channel/${youtubeChannelId}`;
+}
+
+/**
+ * De-duplicates by normalised brand key so "PostHog" and "posthog.com" never both
+ * appear, then joins with " | " for a single spreadsheet cell.
+ */
+export function formatSponsorBrands(brands: string[]): string {
+  const seen = new Set<string>();
+  const unique: string[] = [];
+  for (const brand of brands) {
+    const key = normaliseSponsorKey(brand);
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    unique.push(brand.trim());
+  }
+  return unique.join(" | ");
+}
+
+/**
+ * Builds the CSV. Merging by channel id is done here as well as upstream so a caller
+ * that hands the same creator over twice (found under two search keywords) still
+ * produces one row with the union of their sponsors.
+ */
 export function buildQualifiedCreatorsCsv(records: QualifiedCreatorRecord[]): string {
-  const rows = records.map((record) => ({
+  const byChannel = new Map<string, QualifiedCreatorRecord>();
+  for (const record of records) {
+    const existing = byChannel.get(record.youtubeChannelId);
+    if (!existing) {
+      byChannel.set(record.youtubeChannelId, record);
+      continue;
+    }
+    byChannel.set(record.youtubeChannelId, {
+      ...existing,
+      handle: existing.handle ?? record.handle,
+      niche: existing.niche ?? record.niche,
+      sponsorBrands: [...existing.sponsorBrands, ...record.sponsorBrands],
+      latestEligibleVideoAt:
+        existing.latestEligibleVideoAt && record.latestEligibleVideoAt
+          ? new Date(Math.max(existing.latestEligibleVideoAt.getTime(), record.latestEligibleVideoAt.getTime()))
+          : (existing.latestEligibleVideoAt ?? record.latestEligibleVideoAt),
+    });
+  }
+
+  const rows = Array.from(byChannel.values()).map((record) => ({
     "YouTuber Name": record.channelName,
-    "Channel URL": `https://www.youtube.com/channel/${record.youtubeChannelId}`,
-    // Max two brands — analysis stops once two unique sponsors are confirmed.
-    "Sponsor Brands": record.sponsorBrands.slice(0, 2).join(" | "),
+    "Channel URL": channelUrl(record.youtubeChannelId, record.handle),
+    Niche: record.niche ?? "",
+    "Sponsor Brands": formatSponsorBrands(record.sponsorBrands),
     "Latest Video Date": formatVideoDate(record.latestEligibleVideoAt),
-    Duplicate: record.previouslySeen ? "Yes" : "No",
   }));
   return toCsv(HEADERS, rows);
 }

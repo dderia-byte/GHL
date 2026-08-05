@@ -82,16 +82,64 @@ export function countsAsExternalPaidSponsor(detection: SponsorCandidateDetection
   return { counts: true, reason: "Confirmed external paid sponsorship." };
 }
 
-/** Normalises a brand name for uniqueness comparison (case/punctuation-insensitive). */
+/**
+ * Common TLDs stripped before comparison so a brand written as a domain collapses
+ * onto the same key as its display name ("posthog.com" → "posthog").
+ */
+const DOMAIN_SUFFIXES = [
+  "com",
+  "io",
+  "ai",
+  "co",
+  "net",
+  "org",
+  "dev",
+  "app",
+  "sh",
+  "so",
+  "xyz",
+  "gg",
+  "tv",
+  "me",
+  "cloud",
+  "tools",
+];
+
+/**
+ * Normalises a brand name for uniqueness comparison. Case, spacing and punctuation
+ * are irrelevant, and a URL form is the same brand as its display name, so
+ * "PostHog", "Post Hog", "posthog.com" and "https://www.posthog.com/" all key to
+ * "posthog". A trailing TLD is only stripped when something remains in front of it,
+ * so a brand genuinely named "Co" or "AI" survives.
+ */
 export function normaliseSponsorKey(brandName: string): string {
-  return brandName
+  let value = brandName
     .toLowerCase()
     .normalize("NFKD")
-    .replace(/[^a-z0-9]/g, "");
+    .replace(/^[a-z]+:\/\//, "") // protocol
+    .replace(/^www\./, "")
+    .split(/[/?#]/)[0] // path/query/fragment
+    .replace(/[^a-z0-9.]/g, "");
+
+  // Strip trailing TLDs repeatedly so "example.co.uk" reduces to "example".
+  let stripped = true;
+  while (stripped) {
+    stripped = false;
+    for (const suffix of DOMAIN_SUFFIXES) {
+      const ending = `.${suffix}`;
+      if (value.endsWith(ending) && value.length > ending.length) {
+        value = value.slice(0, -ending.length);
+        stripped = true;
+        break;
+      }
+    }
+  }
+
+  return value.replace(/\./g, "");
 }
 
 export interface QualificationProgress {
-  /** Unique confirmed sponsor brand names, in discovery order (max 2 retained). */
+  /** Unique confirmed sponsor brand names, in discovery order. */
   uniqueSponsors: string[];
   videosAnalysed: number;
 }
@@ -101,44 +149,55 @@ export type QualificationVerdict =
   | { action: "QUALIFY"; reason: string }
   | { action: "REJECT"; reason: string };
 
-export const MAX_VIDEOS_PER_CREATOR = 5;
-export const MAX_SPONSORS_BEFORE_STOP = 2;
-/** With no sponsor by this many videos, the creator is rejected without spending more. */
-export const NO_SPONSOR_GIVE_UP_AFTER = 4;
+/** The newest four eligible long-form videos are the whole evidence window. */
+export const MAX_VIDEOS_PER_CREATOR = 4;
 
 /**
- * The per-creator stopping rule, evaluated after each analysed video:
+ * The per-creator stopping rule, evaluated after each analysed video.
  *
- *  - Two unique confirmed sponsors  → qualify immediately (stop analysing).
- *  - Five videos analysed           → qualify if ≥1 sponsor, else reject.
- *  - Four videos, still no sponsor  → reject (don't pay for a fifth).
- *  - Otherwise                      → continue.
+ * All four videos are analysed rather than stopping at the first sponsor: the CSV
+ * reports *every* unique sponsor in the window, so stopping early would under-report
+ * a creator's brand relationships. There is no fifth video under any circumstances.
+ *
+ *  - Fewer than four analysed → continue.
+ *  - Four analysed, ≥1 sponsor → qualify.
+ *  - Four analysed, no sponsor → reject.
  */
 export function evaluateQualification(progress: QualificationProgress): QualificationVerdict {
-  if (progress.uniqueSponsors.length >= MAX_SPONSORS_BEFORE_STOP) {
-    return {
-      action: "QUALIFY",
-      reason: `Found ${MAX_SPONSORS_BEFORE_STOP} unique confirmed sponsors after ${progress.videosAnalysed} video(s).`,
-    };
-  }
-
   if (progress.videosAnalysed >= MAX_VIDEOS_PER_CREATOR) {
     return progress.uniqueSponsors.length > 0
-      ? { action: "QUALIFY", reason: `Analysed the maximum ${MAX_VIDEOS_PER_CREATOR} videos with ${progress.uniqueSponsors.length} confirmed sponsor(s).` }
-      : { action: "REJECT", reason: `No confirmed sponsor in ${MAX_VIDEOS_PER_CREATOR} analysed videos.` };
-  }
-
-  if (progress.videosAnalysed >= NO_SPONSOR_GIVE_UP_AFTER && progress.uniqueSponsors.length === 0) {
-    return { action: "REJECT", reason: `No confirmed sponsor in the newest ${NO_SPONSOR_GIVE_UP_AFTER} videos.` };
+      ? {
+          action: "QUALIFY",
+          reason: `Analysed the newest ${MAX_VIDEOS_PER_CREATOR} eligible videos with ${progress.uniqueSponsors.length} confirmed sponsor(s).`,
+        }
+      : { action: "REJECT", reason: `No confirmed sponsor in the newest ${MAX_VIDEOS_PER_CREATOR} eligible videos.` };
   }
 
   return { action: "CONTINUE" };
 }
 
-/** Adds a sponsor if it is genuinely new, keeping at most two. Returns whether it was added. */
+/**
+ * Adds a sponsor if it is genuinely new. No cap — every unique confirmed sponsor
+ * across the four-video window is kept so they can all be exported in one cell.
+ */
 export function addUniqueSponsor(existing: string[], brandName: string): { sponsors: string[]; added: boolean } {
   const key = normaliseSponsorKey(brandName);
   if (!key) return { sponsors: existing, added: false };
   if (existing.some((s) => normaliseSponsorKey(s) === key)) return { sponsors: existing, added: false };
-  return { sponsors: [...existing, brandName].slice(0, MAX_SPONSORS_BEFORE_STOP), added: true };
+  return { sponsors: [...existing, brandName], added: true };
+}
+
+/**
+ * Merges two sponsor lists for the same creator, keeping first-seen display names.
+ * Used when a channel is discovered under more than one search keyword and its
+ * evidence has to be combined into a single creator record.
+ */
+export function mergeSponsorLists(...lists: string[][]): string[] {
+  let merged: string[] = [];
+  for (const list of lists) {
+    for (const brand of list) {
+      merged = addUniqueSponsor(merged, brand).sponsors;
+    }
+  }
+  return merged;
 }

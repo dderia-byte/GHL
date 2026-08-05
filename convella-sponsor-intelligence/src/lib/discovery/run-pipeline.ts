@@ -7,6 +7,7 @@ import { upsertChannelRecord } from "@/lib/jobs/channel-scan-pipeline";
 import { enqueueCreatorQualificationJob } from "@/lib/jobs/queue";
 import type { RejectionReason } from "@/generated/prisma/enums";
 import { evaluateFilters } from "./filters";
+import { classifyDiscovery } from "./duplicate-policy";
 import { finalizeRunIfDone, parseSettingsSnapshot } from "./service";
 import { QUOTA_COST, QuotaExhaustedError, commitQuota, releaseQuota, reserveQuota } from "./quota";
 
@@ -133,12 +134,30 @@ export async function processDiscoveryRunJob(jobId: string, discoveryRunId: stri
     });
   }
 
-  // --- Dedup against known channels and cooldown-active rejections --------------
+  // --- Dedup --------------------------------------------------------------------
+  // Three distinct cases, and only two of them are rejections:
+  //
+  //  1. Same channel under several keywords in THIS run — merged by channel id in the
+  //     `discovered` map above. Never a rejection: the creator is analysed once and
+  //     exported once, whichever keyword found them first owns the provenance.
+  //  2. Already a candidate earlier in THIS run (a continuation pass re-found them) —
+  //     skipped silently, not rejected and not counted again. The candidate row is
+  //     already queued or analysed.
+  //  3. Already EXPORTED by a previous completed run (Channel.qualifiedAt set), or
+  //     rejected by a previous run inside the cooldown window — these are the only
+  //     real duplicates, and they are what the permanent database exists to stop.
   const allIds = Array.from(discovered.keys());
-  const knownChannels = allIds.length
-    ? await prisma.channel.findMany({ where: { youtubeChannelId: { in: allIds } }, select: { youtubeChannelId: true } })
+
+  // The permanent creator database = channels a previous run qualified and exported.
+  // A Channel row on its own is NOT enough: rows are created for every accepted
+  // candidate, including ones this very run created moments ago.
+  const exportedChannels = allIds.length
+    ? await prisma.channel.findMany({
+        where: { youtubeChannelId: { in: allIds }, qualifiedAt: { not: null } },
+        select: { youtubeChannelId: true },
+      })
     : [];
-  const knownSet = new Set(knownChannels.map((c) => c.youtubeChannelId));
+  const exportedSet = new Set(exportedChannels.map((c) => c.youtubeChannelId));
 
   const cooldownRejects = allIds.length
     ? await prisma.discoveryCandidate.findMany({
@@ -152,23 +171,29 @@ export async function processDiscoveryRunJob(jobId: string, discoveryRunId: stri
     : [];
   const cooldownSet = new Set(cooldownRejects.map((c) => c.youtubeChannelId));
 
-  const duplicateFiltered: Array<{ channel: DiscoveredChannel; reason: RejectionReason }> = [];
+  // Case 2: candidates this run already created (continuation passes).
+  const existingThisRun = allIds.length
+    ? await prisma.discoveryCandidate.findMany({
+        where: { discoveryRunId, youtubeChannelId: { in: allIds } },
+        select: { youtubeChannelId: true },
+      })
+    : [];
+  const existingThisRunSet = new Set(existingThisRun.map((c) => c.youtubeChannelId));
+
+  const duplicateFiltered: Array<{ channel: DiscoveredChannel; reason: RejectionReason; detail: string }> = [];
   const toHydrate: DiscoveredChannel[] = [];
-  // Channels seen before. When includePreviouslySeenCreators is on they are analysed
-  // anyway and tagged, so nobody is silently dropped on the strength of an older
-  // run's judgement — the operator filters them in the CSV instead.
-  const previouslySeenIds = new Set<string>();
 
   for (const channel of discovered.values()) {
-    const isKnown = knownSet.has(channel.youtubeChannelId);
-    const isCooldown = cooldownSet.has(channel.youtubeChannelId);
-
-    if (isKnown || isCooldown) {
-      previouslySeenIds.add(channel.youtubeChannelId);
-      if (!settings.includePreviouslySeenCreators) {
-        duplicateFiltered.push({ channel, reason: isKnown ? "DUPLICATE_KNOWN" : "DUPLICATE_REJECTED" });
-        continue;
-      }
+    const disposition = classifyDiscovery({
+      youtubeChannelId: channel.youtubeChannelId,
+      candidateIdsThisRun: existingThisRunSet,
+      exportedChannelIds: exportedSet,
+      cooldownRejectedIds: cooldownSet,
+    });
+    if (disposition.action === "MERGE") continue; // already a candidate in this run
+    if (disposition.action === "SKIP") {
+      duplicateFiltered.push({ channel, reason: disposition.reason, detail: disposition.detail });
+      continue;
     }
     toHydrate.push(channel);
   }
@@ -219,16 +244,16 @@ export async function processDiscoveryRunJob(jobId: string, discoveryRunId: stri
   let candidatesRejected = 0;
   const acceptedCandidateIds: string[] = [];
 
-  for (const { channel, reason } of duplicateFiltered) {
+  for (const { channel, reason, detail } of duplicateFiltered) {
     await upsertCandidate({
       discoveryRunId,
       channel,
       state: "FILTERED_OUT",
       rejectionReason: reason,
       // Duplicate skips carry no cooldown of their own — the original rejection's
-      // cooldown (or the channel's continued existence in the DB) is the authority.
+      // cooldown (or the exported creator record) is the authority.
       rejectionExpiresAt: null,
-      detail: reason === "DUPLICATE_KNOWN" ? "Channel is already in the intelligence database." : "Channel was rejected recently (cooldown active).",
+      detail,
     });
     candidatesRejected += 1;
   }
@@ -289,7 +314,6 @@ export async function processDiscoveryRunJob(jobId: string, discoveryRunId: stri
         channelTitle: resource.title,
         channelId: channelRow.id,
         state: "PENDING_ANALYSIS",
-        previouslySeen: previouslySeenIds.has(channelRef.youtubeChannelId),
         subscriberCountAtDiscovery: resource.subscriberCount !== null ? BigInt(resource.subscriberCount) : null,
       },
     });

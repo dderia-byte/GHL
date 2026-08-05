@@ -4,9 +4,11 @@ import {
   countsAsExternalPaidSponsor,
   evaluateQualification,
   looksCreatorOwned,
+  mergeSponsorLists,
   normaliseSponsorKey,
   type SponsorCandidateDetection,
 } from "@/lib/discovery/sponsor-qualification";
+import { classifyDiscovery, mergeDiscoveriesByChannel } from "@/lib/discovery/duplicate-policy";
 import { isEligibleLongForm, selectEligibleVideos } from "@/lib/discovery/video-eligibility";
 import { decideContinuation } from "@/lib/discovery/service";
 import { buildQualifiedCreatorsCsv, qualifiedCreatorsFilename } from "@/lib/csv/qualified-creators-export";
@@ -56,48 +58,45 @@ function runCreator(videoSponsors: Array<string[]>): {
 }
 
 // --- Required test 2 --------------------------------------------------------
-describe("2. New creator with no sponsors in videos 1–4", () => {
-  it("stops after the fourth video and rejects", () => {
+describe("2. New creator with no sponsors in the newest four videos", () => {
+  it("stops after the fourth video and rejects — never analyses a fifth", () => {
     const result = runCreator([[], [], [], [], []]);
     expect(result.outcome).toBe("REJECTED");
     expect(result.videosAnalysed).toBe(4);
-    expect(result.reason).toContain("newest 4 videos");
+    expect(result.reason).toContain("newest 4 eligible videos");
   });
 });
 
 // --- Required test 3 --------------------------------------------------------
 describe("3. New creator with one sponsor in video 1", () => {
-  it("keeps going to video five looking for a second sponsor", () => {
+  it("still analyses all four, then qualifies", () => {
     const result = runCreator([["Nimbus Notes"], [], [], [], []]);
     expect(result.outcome).toBe("QUALIFIED");
-    expect(result.videosAnalysed).toBe(5);
+    expect(result.videosAnalysed).toBe(4);
     expect(result.sponsors).toEqual(["Nimbus Notes"]);
-  });
-
-  it("stops early if a second sponsor turns up before video five", () => {
-    const result = runCreator([["Nimbus Notes"], [], ["Aurora VPN"], [], []]);
-    expect(result.outcome).toBe("QUALIFIED");
-    expect(result.videosAnalysed).toBe(3);
-    expect(result.sponsors).toEqual(["Nimbus Notes", "Aurora VPN"]);
   });
 });
 
 // --- Required test 4 --------------------------------------------------------
-describe("4. New creator with two different sponsors in videos 1 and 2", () => {
-  it("stops after video two and qualifies", () => {
-    const result = runCreator([["Nimbus Notes"], ["Aurora VPN"], [], [], []]);
+describe("4. Two of the newest four videos contain different sponsors", () => {
+  it("collects both and qualifies after the fourth video", () => {
+    const result = runCreator([["Nimbus Notes"], ["Aurora VPN"], [], []]);
     expect(result.outcome).toBe("QUALIFIED");
-    expect(result.videosAnalysed).toBe(2);
+    expect(result.videosAnalysed).toBe(4);
     expect(result.sponsors).toEqual(["Nimbus Notes", "Aurora VPN"]);
+  });
+
+  it("collects three or more — there is no cap on unique sponsors", () => {
+    const result = runCreator([["Convex"], ["Browserbase"], ["Nimbus Notes"], []]);
+    expect(result.sponsors).toEqual(["Convex", "Browserbase", "Nimbus Notes"]);
   });
 });
 
 // --- Required test 5 --------------------------------------------------------
 describe("5. The same sponsor appears in multiple videos", () => {
-  it("stores the brand once and keeps looking for a second unique sponsor", () => {
-    const result = runCreator([["Nimbus Notes"], ["Nimbus Notes"], ["nimbus notes!"], [], []]);
+  it("stores the brand once", () => {
+    const result = runCreator([["Nimbus Notes"], ["Nimbus Notes"], ["nimbus notes!"], []]);
     expect(result.sponsors).toEqual(["Nimbus Notes"]);
-    expect(result.videosAnalysed).toBe(5); // never stopped early — only one unique sponsor
     expect(result.outcome).toBe("QUALIFIED");
   });
 
@@ -107,10 +106,18 @@ describe("5. The same sponsor appears in multiple videos", () => {
     expect(added).toBe(false);
   });
 
-  it("qualifies once a genuinely different second brand appears", () => {
-    const result = runCreator([["Nimbus"], ["Nimbus"], ["Aurora"], [], []]);
-    expect(result.videosAnalysed).toBe(3);
-    expect(result.sponsors).toEqual(["Nimbus", "Aurora"]);
+  it("treats a domain form as the same brand as the display name", () => {
+    expect(normaliseSponsorKey("PostHog")).toBe("posthog");
+    expect(normaliseSponsorKey("posthog.com")).toBe("posthog");
+    expect(normaliseSponsorKey("Post Hog")).toBe("posthog");
+    expect(normaliseSponsorKey("https://www.posthog.com/pricing")).toBe("posthog");
+    expect(addUniqueSponsor(["PostHog"], "posthog.com").added).toBe(false);
+    expect(addUniqueSponsor(["PostHog"], "Post Hog").added).toBe(false);
+  });
+
+  it("does not collapse genuinely different brands that share a suffix", () => {
+    expect(normaliseSponsorKey("Convex")).not.toBe(normaliseSponsorKey("Browserbase"));
+    expect(addUniqueSponsor(["Convex"], "Convex Labs").added).toBe(true);
   });
 });
 
@@ -217,22 +224,128 @@ describe("Video eligibility", () => {
   });
 });
 
+// --- Duplicate policy -------------------------------------------------------
+describe("Duplicate policy", () => {
+  const empty: ReadonlySet<string> = new Set();
+  const policy = (over: Partial<Parameters<typeof classifyDiscovery>[0]> = {}) =>
+    classifyDiscovery({
+      youtubeChannelId: "UCcreator",
+      candidateIdsThisRun: empty,
+      exportedChannelIds: empty,
+      cooldownRejectedIds: empty,
+      ...over,
+    });
+
+  it("A. the same creator found under three different keywords is analysed once", () => {
+    const hits = [
+      { youtubeChannelId: "UCcreator", discoveryQueryId: "q-ai-tools" },
+      { youtubeChannelId: "UCcreator", discoveryQueryId: "q-ai-coding" },
+      { youtubeChannelId: "UCcreator", discoveryQueryId: "q-vibe-coding" },
+      { youtubeChannelId: "UCother", discoveryQueryId: "q-ai-tools" },
+    ];
+    const merged = mergeDiscoveriesByChannel(hits);
+    expect(merged).toHaveLength(2);
+    // First keyword to find them owns the provenance.
+    expect(merged[0].discoveryQueryId).toBe("q-ai-tools");
+    // And none of the repeats is a rejection.
+    expect(policy().action).toBe("ANALYSE");
+  });
+
+  it("F. a creator only in the CURRENT run's candidate list is merged, not skipped", () => {
+    const disposition = policy({ candidateIdsThisRun: new Set(["UCcreator"]) });
+    expect(disposition.action).toBe("MERGE");
+  });
+
+  it("E. a creator already exported by a previous run is skipped", () => {
+    const disposition = policy({ exportedChannelIds: new Set(["UCcreator"]) });
+    expect(disposition).toMatchObject({ action: "SKIP", reason: "DUPLICATE_KNOWN" });
+  });
+
+  it("a creator rejected by a previous run stays skipped for the cooldown", () => {
+    const disposition = policy({ cooldownRejectedIds: new Set(["UCcreator"]) });
+    expect(disposition).toMatchObject({ action: "SKIP", reason: "DUPLICATE_REJECTED" });
+  });
+
+  it("the current run always wins: in-run candidacy beats every skip reason", () => {
+    const disposition = policy({
+      candidateIdsThisRun: new Set(["UCcreator"]),
+      exportedChannelIds: new Set(["UCcreator"]),
+      cooldownRejectedIds: new Set(["UCcreator"]),
+    });
+    expect(disposition.action).toBe("MERGE");
+  });
+
+  it("an unseen creator is analysed", () => {
+    expect(policy({ exportedChannelIds: new Set(["UCsomebodyelse"]) }).action).toBe("ANALYSE");
+  });
+});
+
+// --- Required test B: merging sponsor evidence ------------------------------
+describe("B. The same creator is reached twice with different sponsor evidence", () => {
+  it("merges the unique sponsors into one record", () => {
+    expect(mergeSponsorLists(["Convex"], ["Browserbase"])).toEqual(["Convex", "Browserbase"]);
+  });
+
+  it("does not repeat a brand that both discoveries found", () => {
+    expect(mergeSponsorLists(["Convex", "Browserbase"], ["convex.dev", "Nimbus Notes"])).toEqual([
+      "Convex",
+      "Browserbase",
+      "Nimbus Notes",
+    ]);
+  });
+
+  it("is order-independent for the set of brands", () => {
+    const a = mergeSponsorLists(["A"], ["B"], ["C"]);
+    const b = mergeSponsorLists(["C"], ["B"], ["A"]);
+    expect([...a].sort()).toEqual([...b].sort());
+  });
+});
+
 // --- CSV --------------------------------------------------------------------
 describe("Qualified creators CSV", () => {
-  it("emits exactly five columns in the required order", () => {
+  it("emits exactly five columns in the required order, with no Duplicate column", () => {
     const csv = buildQualifiedCreatorsCsv([
       {
         channelName: "Fictional Dev Creator",
         youtubeChannelId: "UCfictional123",
-        sponsorBrands: ["Nimbus Notes", "Aurora VPN"],
-        latestEligibleVideoAt: new Date("2026-07-28T12:00:00Z"),
+        handle: "@fictionaldev",
+        niche: "AI Development",
+        sponsorBrands: ["Convex", "Browserbase"],
+        latestEligibleVideoAt: new Date("2026-08-03T12:00:00Z"),
       },
     ]);
     const [header, row] = csv.split("\r\n");
-    expect(header).toBe("YouTuber Name,Channel URL,Sponsor Brands,Latest Video Date,Duplicate");
+    expect(header).toBe("YouTuber Name,Channel URL,Niche,Sponsor Brands,Latest Video Date");
+    expect(header).not.toContain("Duplicate");
     expect(row).toBe(
-      'Fictional Dev Creator,https://www.youtube.com/channel/UCfictional123,Nimbus Notes | Aurora VPN,2026-07-28,No',
+      "Fictional Dev Creator,https://www.youtube.com/@fictionaldev,AI Development,Convex | Browserbase,2026-08-03",
     );
+  });
+
+  it("C. puts every unique sponsor in one cell separated by ' | '", () => {
+    const csv = buildQualifiedCreatorsCsv([
+      {
+        channelName: "A",
+        youtubeChannelId: "UC1",
+        sponsorBrands: ["Brand One", "Brand Two", "Brand Three"],
+        latestEligibleVideoAt: null,
+      },
+    ]);
+    expect(csv).toContain("Brand One | Brand Two | Brand Three");
+  });
+
+  it("never repeats the same brand, including its domain form", () => {
+    const csv = buildQualifiedCreatorsCsv([
+      {
+        channelName: "A",
+        youtubeChannelId: "UC1",
+        sponsorBrands: ["PostHog", "posthog.com", "Post Hog", "Convex"],
+        latestEligibleVideoAt: null,
+      },
+    ]);
+    const cell = csv.split("\r\n")[1];
+    expect(cell).toContain("PostHog | Convex");
+    expect(cell).not.toContain("posthog.com");
   });
 
   it("gives one row per creator, never one per sponsor", () => {
@@ -243,41 +356,32 @@ describe("Qualified creators CSV", () => {
     expect(csv.split("\r\n")).toHaveLength(3); // header + 2 creators
   });
 
-  it("caps sponsors at two per creator", () => {
+  it("A (export half). the same creator passed in twice becomes one row with merged sponsors", () => {
     const csv = buildQualifiedCreatorsCsv([
-      { channelName: "A", youtubeChannelId: "UC1", sponsorBrands: ["X", "Y", "Z"], latestEligibleVideoAt: null },
+      { channelName: "Chris", youtubeChannelId: "UC1", sponsorBrands: ["Convex"], latestEligibleVideoAt: new Date("2026-07-01") },
+      { channelName: "Chris", youtubeChannelId: "UC1", sponsorBrands: ["Browserbase"], latestEligibleVideoAt: new Date("2026-08-03") },
     ]);
-    expect(csv).toContain("X | Y");
-    expect(csv).not.toContain("Z");
+    const rows = csv.split("\r\n");
+    expect(rows).toHaveLength(2); // header + ONE creator
+    expect(rows[1]).toContain("Convex | Browserbase");
+    expect(rows[1]).toContain("2026-08-03"); // newest of the two dates
   });
 
+  it("falls back to the channel-id URL when there is no handle", () => {
+    const csv = buildQualifiedCreatorsCsv([
+      { channelName: "A", youtubeChannelId: "UCfictional123", sponsorBrands: ["X"], latestEligibleVideoAt: null },
+    ]);
+    expect(csv).toContain("https://www.youtube.com/channel/UCfictional123");
+  });
 
   it("uses the required filename format", () => {
     expect(qualifiedCreatorsFilename(new Date("2026-08-03T09:00:00Z"))).toBe("qualified_creators_2026-08-03.csv");
   });
 
-  it("adds a Duplicate column so previously-seen creators can be filtered by hand", () => {
-    const csv = buildQualifiedCreatorsCsv([
-      { channelName: "Fresh Find", youtubeChannelId: "UC1", sponsorBrands: ["X"], latestEligibleVideoAt: null, previouslySeen: false },
-      { channelName: "Seen Before", youtubeChannelId: "UC2", sponsorBrands: ["Y"], latestEligibleVideoAt: null, previouslySeen: true },
-    ]);
-    const [header, fresh, seen] = csv.split("\r\n");
-    expect(header.endsWith(",Duplicate")).toBe(true);
-    expect(fresh.endsWith(",No")).toBe(true);
-    expect(seen.endsWith(",Yes")).toBe(true);
-  });
-
-  it("defaults Duplicate to No when the flag is absent", () => {
+  it("leaves the date and niche blank rather than guessing when unknown", () => {
     const csv = buildQualifiedCreatorsCsv([
       { channelName: "A", youtubeChannelId: "UC1", sponsorBrands: ["X"], latestEligibleVideoAt: null },
     ]);
-    expect(csv.split("\r\n")[1].endsWith(",No")).toBe(true);
-  });
-
-  it("leaves the date blank rather than guessing when unknown", () => {
-    const csv = buildQualifiedCreatorsCsv([
-      { channelName: "A", youtubeChannelId: "UC1", sponsorBrands: ["X"], latestEligibleVideoAt: null },
-    ]);
-    expect(csv.split("\r\n")[1]).toContain(",,"); // empty date cell before Duplicate
+    expect(csv.split("\r\n")[1]).toBe("A,https://www.youtube.com/channel/UC1,,X,");
   });
 });

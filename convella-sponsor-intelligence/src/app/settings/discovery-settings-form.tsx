@@ -18,10 +18,9 @@ export interface DiscoverySettingsFormValues {
   maxSubscribers: number;
   maxVideoAgeDays: number;
   rejectionCooldownDays: number;
-  includePreviouslySeenCreators: boolean;
 }
 
-type NumericSettingKey = Exclude<keyof DiscoverySettingsFormValues, "includePreviouslySeenCreators">;
+type NumericSettingKey = keyof DiscoverySettingsFormValues;
 
 const FIELDS: { name: NumericSettingKey; label: string; hint?: string; step?: string }[] = [
   { name: "dailyCostLimitUsd", label: "Daily cost limit (USD)", hint: "Hard ceiling across ALL runs per UTC day", step: "0.01" },
@@ -66,23 +65,6 @@ export function DiscoverySettingsForm({ values }: { values: DiscoverySettingsFor
           {field.hint && <span className="text-xs font-normal text-muted-foreground">{field.hint}</span>}
         </label>
       ))}
-      <label className="sm:col-span-2 flex items-start gap-2.5 rounded-lg border border-border bg-muted/30 p-3 text-sm">
-        <input
-          type="checkbox"
-          name="includePreviouslySeenCreators"
-          defaultChecked={values.includePreviouslySeenCreators}
-          className="mt-0.5 size-4 rounded border-border"
-        />
-        <span>
-          <span className="font-medium text-foreground">Include previously-seen creators</span>
-          <span className="mt-0.5 block text-xs font-normal text-muted-foreground">
-            Analyse creators already in the database or rejected by an earlier run instead of skipping them. They are
-            tagged <strong>Duplicate = Yes</strong> in the CSV so you can filter them by hand and never miss anyone.
-            Costs money: previously-rejected videos are analysed again.
-          </span>
-        </span>
-      </label>
-
       <div className="sm:col-span-2 flex items-center justify-between gap-4">
         {state?.error ? (
           <p className="text-sm text-rose-600 dark:text-rose-400">{state.error}</p>

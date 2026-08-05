@@ -78,7 +78,6 @@ export async function buildDiscoverySettingsSnapshot(): Promise<DiscoverySetting
     maxSubscribers: await getSetting("discovery.maxSubscribers"),
     allowHiddenSubscriberCounts: await getSetting("discovery.allowHiddenSubscriberCounts"),
     maxVideoAgeDays: await getSetting("discovery.maxVideoAgeDays"),
-    includePreviouslySeenCreators: await getSetting("discovery.includePreviouslySeenCreators"),
     rejectionCooldownDays: await getSetting("discovery.rejectionCooldownDays"),
     maxPagesPerQuery: await getSetting("discovery.maxPagesPerQuery"),
     maxGatingPaidVideos: await getSetting("discovery.maxGatingPaidVideos"),

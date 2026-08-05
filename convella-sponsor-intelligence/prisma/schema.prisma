@@ -157,7 +157,8 @@ model Channel {
   /// Set once the creator passed qualification with >=1 confirmed external paid
   /// sponsor. Its presence is what makes the creator exportable.
   qualifiedAt             DateTime?
-  /// Unique confirmed sponsor brand names (max 2 — analysis stops at two).
+  /// Every unique confirmed external paid sponsor found in the analysed window,
+  /// merged across every discovery that reached this creator.
   confirmedSponsorBrands  String[]  @default([])
   /// Publish date of the newest ELIGIBLE long-form video (not the sponsor video).
   latestEligibleVideoAt   DateTime?
@@ -618,6 +619,8 @@ model DiscoveryCandidate {
   /// earlier run) at the moment this candidate was created. Surfaced as the CSV's
   /// "Duplicate" column so previously-seen creators can be included in a run and
   /// filtered by hand rather than silently dropped.
+  /// Retired: superseded by proper intra-run merging (same channel under several
+  /// keywords is one creator, not a duplicate). Historical rows only.
   previouslySeen   Boolean  @default(false)
   /// How many paid gating analyses have been attempted (resume cursor into the free
   /// gate's ranked paidOrder), so a halt/crash mid-gating never re-pays for a video.
