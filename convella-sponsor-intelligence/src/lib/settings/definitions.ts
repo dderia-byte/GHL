@@ -70,6 +70,45 @@ export const SETTING_DEFINITIONS = {
     envFallback: "DISCOVERY_MAX_VIDEO_AGE_DAYS",
     description: "Channels whose newest upload is older than this are rejected as inactive.",
   }),
+  "discovery.metadataOnlyDetection": def({
+    key: "discovery.metadataOnlyDetection",
+    schema: z.boolean(),
+    defaultValue: true,
+    envFallback: "DISCOVERY_METADATA_ONLY_DETECTION",
+    description:
+      "Accept a sponsor straight from the title/description/metadata when the disclosure is explicit, with no transcript and no paid model call.",
+  }),
+  "discovery.transcriptFallbackEnabled": def({
+    key: "discovery.transcriptFallbackEnabled",
+    schema: z.boolean(),
+    defaultValue: true,
+    envFallback: "DISCOVERY_TRANSCRIPT_FALLBACK",
+    description:
+      "Fetch a transcript when the metadata shows a promotional signal but does not conclusively name the sponsor.",
+  }),
+  "discovery.maxTranscriptSecondsPerVideo": def({
+    key: "discovery.maxTranscriptSecondsPerVideo",
+    schema: z.number().int().min(0).max(3600),
+    defaultValue: 120,
+    envFallback: "DISCOVERY_MAX_TRANSCRIPT_SECONDS",
+    description:
+      "Transcript seconds analysed per video. Covers the opening read plus short windows around detected brand names — never the full transcript.",
+  }),
+  "discovery.geminiTextFallbackEnabled": def({
+    key: "discovery.geminiTextFallbackEnabled",
+    schema: z.boolean(),
+    defaultValue: false,
+    envFallback: "DISCOVERY_GEMINI_TEXT_FALLBACK",
+    description: "Allow a paid text-model call when metadata and the limited transcript are both inconclusive.",
+  }),
+  "discovery.nativeVideoAnalysisEnabled": def({
+    key: "discovery.nativeVideoAnalysisEnabled",
+    schema: z.boolean(),
+    defaultValue: false,
+    envFallback: "DISCOVERY_NATIVE_VIDEO_ANALYSIS",
+    description:
+      "Native video/audio/visual analysis during discovery runs. Off: it is by far the most expensive stage and discovery does not need it.",
+  }),
   "discovery.rejectionCooldownDays": def({
     key: "discovery.rejectionCooldownDays",
     schema: z.number().int().min(0).max(3650),
@@ -103,7 +142,7 @@ export const SETTING_DEFINITIONS = {
   "budgets.perRunCostLimitUsd": def({
     key: "budgets.perRunCostLimitUsd",
     schema: z.number().min(0).max(10_000),
-    defaultValue: 10,
+    defaultValue: 1,
     envFallback: "BUDGET_PER_RUN_COST_LIMIT_USD",
     description: "Hard ceiling on estimated model spend for a single discovery run.",
   }),
@@ -131,6 +170,11 @@ export interface DiscoverySettingsSnapshot {
   allowHiddenSubscriberCounts: boolean;
   maxVideoAgeDays: number;
   rejectionCooldownDays: number;
+  metadataOnlyDetection: boolean;
+  transcriptFallbackEnabled: boolean;
+  maxTranscriptSecondsPerVideo: number;
+  geminiTextFallbackEnabled: boolean;
+  nativeVideoAnalysisEnabled: boolean;
   maxPagesPerQuery: number;
   minIntervalHours: number;
   dailyCostLimitUsd: number;

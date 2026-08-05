@@ -98,8 +98,14 @@ export async function runStageTwo(params: {
   title: string;
   candidateBrands: CandidateBrand[];
   windows: TranscriptWindow[];
+  /**
+   * When false, Stage 2 runs its FREE deterministic pass only and stops there rather
+   * than paying the cheap text model for ambiguous cases. Discovery runs use this:
+   * an unresolved video is marked unclear and the sweep moves on.
+   */
+  allowModel?: boolean;
 }): Promise<StageTwoResult> {
-  const { title, candidateBrands, windows } = params;
+  const { title, candidateBrands, windows, allowModel = true } = params;
 
   if (windows.length === 0) {
     return {
@@ -139,6 +145,25 @@ export async function runStageTwo(params: {
       reason: `Explicit spoken sponsorship statement found naming ${deterministic.brand.name} — resolved without a model call.`,
       brandName: deterministic.brand.name,
       brandDomain: deterministic.brand.domain,
+      inputTokens: 0,
+      outputTokens: 0,
+      estimatedCost: 0,
+    };
+  }
+
+  if (!allowModel) {
+    return {
+      completed: true,
+      shouldStop: false,
+      modelUsed: false,
+      modelName: null,
+      transcriptWindowsAnalysed: windows.length,
+      transcriptCharactersSent,
+      confidenceScore: 0,
+      evidence: [],
+      reason: "Transcript windows were inconclusive and the paid text fallback is disabled — marked unclear.",
+      brandName: null,
+      brandDomain: null,
       inputTokens: 0,
       outputTokens: 0,
       estimatedCost: 0,

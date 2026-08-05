@@ -47,24 +47,26 @@ export default async function DiscoveryRunDetailPage(props: { params: Promise<{ 
       </Card>
 
       <Card>
-        <h2 className="text-sm font-semibold text-foreground">Duplicate handling</h2>
-        <dl className="mt-4 grid grid-cols-1 gap-4 text-sm sm:grid-cols-3">
+        <h2 className="text-sm font-semibold text-foreground">Analysis cost breakdown</h2>
+        <dl className="mt-4 grid grid-cols-2 gap-4 text-sm sm:grid-cols-4 lg:grid-cols-7">
+          <Stat label="Metadata only" value={run.metadataOnlyVideos} hint="Free — no transcript, no model call." />
+          <Stat label="Transcript fallback" value={run.transcriptFallbackVideos} hint="Limited transcript window." />
+          <Stat label="AI fallback" value={run.aiFallbackVideos} hint="Needed a paid model call." />
+          <Stat label="Unclear" value={run.unclearVideos} hint="Left unresolved rather than escalated." />
           <Stat
-            label="Merged (same run)"
+            label="Merged (this run)"
             value={run.sameRunDuplicatesMerged}
-            hint="Same channel found under more than one keyword. Analysed once, exported once — not a rejection."
+            hint="Same channel under more than one keyword — analysed once."
           />
-          <Stat
-            label="Skipped — already exported"
-            value={run.previouslyQualifiedSkipped}
-            hint="Qualified and exported by a previous run, so not generated again."
-          />
-          <Stat
-            label="Skipped — cooldown"
-            value={run.cooldownSkipped}
-            hint="Rejected by a previous run. Eligible again once the cooldown expires."
-          />
+          <Stat label="Qualified" value={run.qualifiedCount} />
+          <Stat label="No sponsor" value={run.creatorsWithNoSponsor} />
         </dl>
+        <p className="mt-4 text-xs text-muted-foreground">
+          Total cost{" "}
+          <span className="font-semibold text-foreground">${Number(run.totalEstimatedCost).toFixed(4)}</span> of the $
+          {snapshot.perRunCostLimitUsd.toFixed(2)} per-run cap. Creators found by earlier runs are re-analysed rather
+          than skipped — unchanged videos reuse their cached result for free.
+        </p>
       </Card>
 
       <Card>

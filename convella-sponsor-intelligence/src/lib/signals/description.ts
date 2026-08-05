@@ -62,7 +62,16 @@ function extractCandidateBrands(description: string): string[] {
         const sentenceEnd = brand.search(/\.\s/);
         if (sentenceEnd !== -1) brand = brand.slice(0, sentenceEnd);
         brand = brand.replace(/[.,!?'"]+$/, "").trim();
-        if (brand.length > 1 && brand.length < 60) candidates.add(brand);
+        // "sponsored by Nimbus Notes and Aurora VPN" is TWO sponsors, not a brand
+        // called "Nimbus Notes and Aurora". Split on the conjunction and emit each
+        // side separately: two candidates make the disclosure ambiguous, which sends
+        // it to corroboration instead of auto-stopping on a merged, wrong name. A
+        // genuine "Ben and Jerry's" also splits, which costs a cheap extra stage but
+        // never invents a brand — the safe direction to be wrong in.
+        for (const part of brand.split(/\s+(?:and|&)\s+/i)) {
+          const cleaned = part.replace(/[.,!?'"]+$/, "").trim();
+          if (cleaned.length > 1 && cleaned.length < 60) candidates.add(cleaned);
+        }
       }
       searchFrom = idx + phrase.length;
       idx = lower.indexOf(phrase, searchFrom);

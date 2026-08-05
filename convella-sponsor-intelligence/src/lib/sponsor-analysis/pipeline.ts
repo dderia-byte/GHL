@@ -10,7 +10,7 @@ import type { AnalysisMode } from "@/generated/prisma/enums";
 import { runStageOne } from "./stage-one";
 import { runStageTwo } from "./stage-two";
 import { runStageThree } from "./stage-three";
-import { extractTranscriptWindows } from "./transcript-windows";
+import { capWindowsToBudget, extractTranscriptWindows } from "./transcript-windows";
 import { hashContent } from "./hashing";
 import { estimateReasoningModelCost } from "./cost";
 import type { StageThreeResult, StageTwoResult } from "./types";
@@ -20,7 +20,28 @@ export interface SponsorAnalysisOptions {
   forceMode?: AnalysisMode;
   /** Bypasses hash-based stage reuse and re-runs the full pipeline even if content hasn't changed. */
   forceFullReanalysis?: boolean;
+  /**
+   * Per-call cost ceiling for discovery runs. Discovery is a wide, cheap sweep — it
+   * wants metadata first, a short transcript window only when that is inconclusive, and
+   * no native video at all. Omitted for manual single-video analysis, which keeps the
+   * full-fidelity behaviour.
+   */
+  costProfile?: SponsorAnalysisCostProfile;
 }
+
+export interface SponsorAnalysisCostProfile {
+  /** Allow Stage 2 (transcript windows + cheap model). */
+  transcriptFallbackEnabled: boolean;
+  /** Transcript seconds analysed per video; windows are trimmed to fit this budget. */
+  maxTranscriptSeconds: number;
+  /** Allow the paid text model inside Stage 2. When false, Stage 2 stays deterministic. */
+  textModelFallbackEnabled: boolean;
+  /** Allow Stage 3 (native video/audio/visual). */
+  nativeVideoAnalysisEnabled: boolean;
+}
+
+/** Which stage actually did the work — reported per video for the run counters. */
+export type AnalysisPathway = "METADATA_ONLY" | "TRANSCRIPT_FALLBACK" | "AI_FALLBACK" | "UNCLEAR" | "CACHED";
 
 const DETECTION_WORTHY_CONFIDENCE = 0.25;
 
@@ -51,10 +72,15 @@ async function syncDetectionEvidence(detectionId: string, evidence: SponsorEvide
  * the earliest stage that produces a sufficiently reliable result, and never running a
  * later stage once an earlier one has resolved the sponsor.
  */
-export async function runSponsorAnalysisPipeline(jobId: string, videoId: string, options: SponsorAnalysisOptions = {}) {
+export async function runSponsorAnalysisPipeline(
+  jobId: string,
+  videoId: string,
+  options: SponsorAnalysisOptions = {},
+): Promise<AnalysisPathway> {
   const env = getEnv();
   const video = await prisma.video.findUniqueOrThrow({ where: { id: videoId } });
   const analysisMode: AnalysisMode = options.forceMode ?? video.analysisMode;
+  const profile = options.costProfile ?? null;
 
   const descriptionSignals = analyseDescription(video.description);
   const metadataSignals = analyseYouTubeMetadata({
@@ -100,7 +126,7 @@ export async function runSponsorAnalysisPipeline(jobId: string, videoId: string,
         modelUsage: { reused: true, resolvedAtStage: video.resolvedAtStage },
       },
     });
-    return;
+    return "CACHED";
   }
 
   await prisma.video.update({ where: { id: videoId }, data: { analysisStatus: "PROCESSING" } });
@@ -125,10 +151,26 @@ export async function runSponsorAnalysisPipeline(jobId: string, videoId: string,
     finalBrandDomain = stageOne.brandDomain;
     finalConfidence = stageOne.confidenceScore;
     finalReason = stageOne.reason;
+  } else if (profile && !profile.transcriptFallbackEnabled) {
+    // Discovery with the transcript fallback switched off: metadata is the whole
+    // budget. Anything metadata could not settle is unclear, and that is fine.
+    skippedExpensiveReason = "Transcript fallback is disabled for this run.";
+    finalBrandName = stageOne.brandName;
+    finalBrandDomain = stageOne.brandDomain;
+    finalConfidence = stageOne.confidenceScore;
+    finalReason = skippedExpensiveReason;
   } else {
     // --- Stage 2: targeted transcript windows, cheap model only if ambiguous ----
-    const transcriptWindows = extractTranscriptWindows(transcript.segments);
-    stageTwo = await runStageTwo({ title: video.title, candidateBrands: stageOne.candidateBrands, windows: transcriptWindows });
+    // Discovery caps the transcript at a fixed seconds budget (default 120s: the
+    // opening read plus short windows around detected brand names).
+    const allWindows = extractTranscriptWindows(transcript.segments);
+    const transcriptWindows = profile ? capWindowsToBudget(allWindows, profile.maxTranscriptSeconds) : allWindows;
+    stageTwo = await runStageTwo({
+      title: video.title,
+      candidateBrands: stageOne.candidateBrands,
+      windows: transcriptWindows,
+      allowModel: profile ? profile.textModelFallbackEnabled : true,
+    });
     finalEvidence = [...finalEvidence, ...stageTwo.evidence];
 
     if (stageTwo.shouldStop) {
@@ -137,6 +179,12 @@ export async function runSponsorAnalysisPipeline(jobId: string, videoId: string,
       finalBrandDomain = stageTwo.brandDomain;
       finalConfidence = stageTwo.confidenceScore;
       finalReason = stageTwo.reason;
+    } else if (profile && !profile.nativeVideoAnalysisEnabled) {
+      skippedExpensiveReason = "Native video analysis is disabled for discovery runs — video marked unclear.";
+      finalBrandName = stageTwo.brandName ?? stageOne.brandName;
+      finalBrandDomain = stageTwo.brandDomain ?? stageOne.brandDomain;
+      finalConfidence = Math.max(stageOne.confidenceScore, stageTwo.confidenceScore);
+      finalReason = skippedExpensiveReason;
     } else if (!env.ENABLE_NATIVE_VIDEO_ANALYSIS) {
       skippedExpensiveReason = "Native video analysis is disabled.";
       finalBrandName = stageTwo.brandName ?? stageOne.brandName;
@@ -368,4 +416,16 @@ export async function runSponsorAnalysisPipeline(jobId: string, videoId: string,
       },
     },
   });
+
+  // Which stage actually did the work, for the run's cost counters.
+  if (resolvedAtStage === 1) return "METADATA_ONLY";
+  if (resolvedAtStage === 2) return stageTwo?.modelUsed ? "AI_FALLBACK" : "TRANSCRIPT_FALLBACK";
+  if (resolvedAtStage === 3) return "AI_FALLBACK";
+  if (stageThree?.callsMade || stageTwo?.modelUsed) return "AI_FALLBACK";
+  if (stageTwo && stageTwo.transcriptWindowsAnalysed > 0) return "TRANSCRIPT_FALLBACK";
+  // No commercial signal anywhere in title/description/metadata is a CONCLUSION, not a
+  // failure to reach one: metadata settled it, for free. Only a video that showed a
+  // promotional signal we could not pin to a sponsor is genuinely unclear.
+  if (!stageOne.explicitCommercialSignal && stageOne.candidateBrands.length === 0) return "METADATA_ONLY";
+  return "UNCLEAR";
 }

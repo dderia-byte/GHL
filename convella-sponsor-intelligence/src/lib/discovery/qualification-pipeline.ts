@@ -5,7 +5,7 @@ import { recordAudit } from "@/lib/audit/log";
 import { getYouTubeSearchProvider } from "@/lib/youtube/search-provider";
 import { youtubeClient } from "@/lib/youtube/client";
 import type { YouTubeVideoResource } from "@/lib/youtube/types";
-import { runSponsorAnalysisPipeline } from "@/lib/sponsor-analysis/pipeline";
+import { runSponsorAnalysisPipeline, type AnalysisPathway } from "@/lib/sponsor-analysis/pipeline";
 import { requeueJobWithoutAttempt } from "@/lib/jobs/queue";
 import type { DiscoverySettingsSnapshot } from "@/lib/settings";
 import { evaluateActivity } from "./filters";
@@ -143,6 +143,7 @@ export async function processCreatorQualificationJob(jobId: string, candidateId:
 
           const result = await analyseCandidateVideo(jobId, candidateId, cursor, settings);
           if (result.yielded) return;
+          if (result.pathway) await recordPathway(run.id, result.pathway);
 
           // Record any newly-confirmed EXTERNAL PAID sponsors from this video, plus
           // which video proved each one (kept in SQL only, never in the CSV).
@@ -402,7 +403,9 @@ async function rejectCandidate(
     where: { id: candidate.discoveryRunId },
     data: {
       candidatesRejected: { increment: 1 },
-      ...(to === "REJECTED_NO_SPONSOR" ? { rejectedNoSponsor: { increment: 1 } } : {}),
+      ...(to === "REJECTED_NO_SPONSOR"
+        ? { rejectedNoSponsor: { increment: 1 }, creatorsWithNoSponsor: { increment: 1 } }
+        : {}),
     },
   });
   await recordAudit({
@@ -559,10 +562,10 @@ async function analyseCandidateVideo(
   videoIndex: number,
   settings: DiscoverySettingsSnapshot,
   options: { partialOnHalt?: boolean } = {},
-): Promise<{ status: AnalysisStatus | null; yielded: boolean }> {
+): Promise<{ status: AnalysisStatus | null; yielded: boolean; pathway: AnalysisPathway | null }> {
   const candidate = await prisma.discoveryCandidate.findUniqueOrThrow({ where: { id: candidateId } });
   const videoDbId = candidate.deepScanVideoIds[videoIndex];
-  if (!videoDbId) return { status: null, yielded: false };
+  if (!videoDbId) return { status: null, yielded: false, pathway: null };
 
   const existing = await prisma.video.findUniqueOrThrow({ where: { id: videoDbId } });
 
@@ -596,7 +599,7 @@ async function analyseCandidateVideo(
       entityId: run.id,
       detail: { blockedBy: decision.blockedBy, candidateId },
     });
-    return { status: null, yielded: true };
+    return { status: null, yielded: true, pathway: null };
   }
 
   const childJob = await prisma.analysisJob.create({
@@ -612,8 +615,19 @@ async function analyseCandidateVideo(
   });
   await prisma.video.update({ where: { id: videoDbId }, data: { analysisStatus: "QUEUED", stopReason: null } });
 
+  // Discovery's cost profile: metadata first, a short transcript window only when that
+  // is inconclusive, and never native video. An unresolved video is marked unclear
+  // rather than escalated.
+  let pathway: AnalysisPathway | null = null;
   try {
-    await runSponsorAnalysisPipeline(childJob.id, videoDbId);
+    pathway = await runSponsorAnalysisPipeline(childJob.id, videoDbId, {
+      costProfile: {
+        transcriptFallbackEnabled: settings.transcriptFallbackEnabled,
+        maxTranscriptSeconds: settings.maxTranscriptSecondsPerVideo,
+        textModelFallbackEnabled: settings.geminiTextFallbackEnabled,
+        nativeVideoAnalysisEnabled: settings.nativeVideoAnalysisEnabled,
+      },
+    });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     await prisma.analysisJob.update({
@@ -641,7 +655,7 @@ async function analyseCandidateVideo(
     data: { totalEstimatedCost: { increment: childAfter.estimatedCost }, videosAnalysed: { increment: 1 } },
   });
 
-  return { status: videoAfter.analysisStatus, yielded: false };
+  return { status: videoAfter.analysisStatus, yielded: false, pathway };
 }
 
 async function haltRunForQuota(jobId: string, discoveryRunId: string, error: QuotaExhaustedError) {
@@ -656,5 +670,21 @@ async function haltRunForQuota(jobId: string, discoveryRunId: string, error: Quo
     entityType: "DiscoveryRun",
     entityId: discoveryRunId,
     detail: { message: error.message },
+  });
+}
+
+/** Increments the run's per-pathway cost counters for one analysed video. */
+async function recordPathway(discoveryRunId: string, pathway: AnalysisPathway): Promise<void> {
+  const column = {
+    METADATA_ONLY: "metadataOnlyVideos",
+    CACHED: "metadataOnlyVideos", // reused result — free, same as metadata-only
+    TRANSCRIPT_FALLBACK: "transcriptFallbackVideos",
+    AI_FALLBACK: "aiFallbackVideos",
+    UNCLEAR: "unclearVideos",
+  }[pathway];
+
+  await prisma.discoveryRun.update({
+    where: { id: discoveryRunId },
+    data: { [column]: { increment: 1 } },
   });
 }

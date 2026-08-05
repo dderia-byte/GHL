@@ -226,17 +226,9 @@ describe("Video eligibility", () => {
   });
 });
 
-// --- Duplicate policy -------------------------------------------------------
+// --- Duplicate policy (current run only) ------------------------------------
 describe("Duplicate policy", () => {
   const empty: ReadonlySet<string> = new Set();
-  const policy = (over: Partial<Parameters<typeof classifyDiscovery>[0]> = {}) =>
-    classifyDiscovery({
-      youtubeChannelId: "UCcreator",
-      candidateIdsThisRun: empty,
-      exportedChannelIds: empty,
-      cooldownRejectedIds: empty,
-      ...over,
-    });
 
   it("A. the same creator found under three different keywords is analysed once", () => {
     const hits = [
@@ -249,36 +241,36 @@ describe("Duplicate policy", () => {
     expect(merged).toHaveLength(2);
     // First keyword to find them owns the provenance.
     expect(merged[0].discoveryQueryId).toBe("q-ai-tools");
-    // And none of the repeats is a rejection.
-    expect(policy().action).toBe("ANALYSE");
+    // And the repeats are merged, never counted as a rejected duplicate.
+    expect(classifyDiscovery({ youtubeChannelId: "UCcreator", candidateIdsThisRun: empty }).action).toBe("ANALYSE");
   });
 
-  it("F. a creator only in the CURRENT run's candidate list is merged, not skipped", () => {
-    const disposition = policy({ candidateIdsThisRun: new Set(["UCcreator"]) });
-    expect(disposition.action).toBe("MERGE");
-  });
-
-  it("E. a creator already exported by a previous run is skipped", () => {
-    const disposition = policy({ exportedChannelIds: new Set(["UCcreator"]) });
-    expect(disposition).toMatchObject({ action: "SKIP", reason: "DUPLICATE_KNOWN" });
-  });
-
-  it("a creator rejected by a previous run stays skipped for the cooldown", () => {
-    const disposition = policy({ cooldownRejectedIds: new Set(["UCcreator"]) });
-    expect(disposition).toMatchObject({ action: "SKIP", reason: "DUPLICATE_REJECTED" });
-  });
-
-  it("the current run always wins: in-run candidacy beats every skip reason", () => {
-    const disposition = policy({
+  it("merges a creator already made a candidate earlier in THIS run", () => {
+    const disposition = classifyDiscovery({
+      youtubeChannelId: "UCcreator",
       candidateIdsThisRun: new Set(["UCcreator"]),
-      exportedChannelIds: new Set(["UCcreator"]),
-      cooldownRejectedIds: new Set(["UCcreator"]),
     });
     expect(disposition.action).toBe("MERGE");
   });
 
-  it("an unseen creator is analysed", () => {
-    expect(policy({ exportedChannelIds: new Set(["UCsomebodyelse"]) }).action).toBe("ANALYSE");
+  it("does NOT skip a creator qualified and exported by a previous run", () => {
+    // The permanent blocklist is gone: SQL is history, not an exclusion rule. A
+    // creator exported last month is analysed again and may appear in a new CSV.
+    expect(classifyDiscovery({ youtubeChannelId: "UCexportedLastMonth", candidateIdsThisRun: empty }).action).toBe(
+      "ANALYSE",
+    );
+  });
+
+  it("does NOT skip a creator rejected by a previous run", () => {
+    expect(classifyDiscovery({ youtubeChannelId: "UCrejectedLastMonth", candidateIdsThisRun: empty }).action).toBe(
+      "ANALYSE",
+    );
+  });
+
+  it("has no SKIP disposition at all — only ANALYSE or MERGE", () => {
+    const ids = ["UCa", "UCb", "UCc"];
+    const actions = ids.map((id) => classifyDiscovery({ youtubeChannelId: id, candidateIdsThisRun: new Set(["UCb"]) }).action);
+    expect(actions).toEqual(["ANALYSE", "MERGE", "ANALYSE"]);
   });
 });
 

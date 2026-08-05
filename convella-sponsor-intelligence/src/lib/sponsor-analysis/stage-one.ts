@@ -53,6 +53,18 @@ export function runStageOne(
   });
 
   const strongMatch = descriptionSignals.disclosureMatches.find((m) => STRONG_STOP_PHRASES.has(m.phrase));
+
+  /**
+   * Which candidate brands are named in the strong disclosure's OWN sentence. A
+   * typical description lists several brands ("gear I use", affiliate links) while
+   * disclosing exactly one sponsor — requiring the whole description to mention a
+   * single brand would send those to a paid stage unnecessarily. Binding the brand to
+   * the disclosure context resolves them for free without weakening the rule: it still
+   * takes a strong phrase, and still refuses when the phrase itself names two brands.
+   */
+  const brandsInDisclosureContext = strongMatch
+    ? candidateBrands.filter((b) => strongMatch.context.toLowerCase().includes(b.name.toLowerCase()))
+    : [];
   const explicitCommercialSignal =
     descriptionSignals.hasExplicitSponsorDisclosure ||
     metadataSignals.paidProductPlacement ||
@@ -69,7 +81,16 @@ export function runStageOne(
   const discountCode = descriptionSignals.discountCodes[0] ?? null;
   const callToAction = descriptionSignals.callsToAction[0] ?? null;
 
-  if (!strongMatch || candidateBrands.length !== 1) {
+  // The brand this disclosure actually names: the one inside the disclosure sentence
+  // when that is unambiguous, otherwise the sole candidate in the whole description.
+  const disclosedBrand =
+    brandsInDisclosureContext.length === 1
+      ? brandsInDisclosureContext[0]
+      : candidateBrands.length === 1
+        ? candidateBrands[0]
+        : null;
+
+  if (!strongMatch || !disclosedBrand) {
     // No strong, unambiguous disclosure to safely auto-stop on — hand off to Stage 2/3
     // with whatever candidates/evidence were found so they don't have to re-derive it.
     return {
@@ -86,13 +107,15 @@ export function runStageOne(
       affiliateOnly: !descriptionSignals.hasExplicitSponsorDisclosure && descriptionSignals.discountCodes.length > 0,
       reason: !strongMatch
         ? "No strong, unambiguous sponsorship disclosure found in description/metadata alone."
-        : `${candidateBrands.length} candidate brands found — ambiguous, cannot safely auto-stop without corroboration.`,
+        : brandsInDisclosureContext.length > 1
+          ? `The disclosure names ${brandsInDisclosureContext.length} brands — ambiguous, cannot safely auto-stop without corroboration.`
+          : `${candidateBrands.length} candidate brands found and none is named in the disclosure itself — ambiguous, cannot safely auto-stop.`,
       brandName: candidateBrands[0]?.name ?? null,
       brandDomain: candidateBrands[0]?.domain ?? null,
     };
   }
 
-  const brand = candidateBrands[0];
+  const brand = disclosedBrand;
   const creatorOwnedProduct = looksCreatorOwned(strongMatch.context);
   const domainMatch = brand.domain !== null;
   const hasCta = descriptionSignals.callsToAction.length > 0 || CTA_PATTERN.test(strongMatch.context);

@@ -139,44 +139,20 @@ export async function processDiscoveryRunJob(jobId: string, discoveryRunId: stri
     });
   }
 
-  // --- Dedup --------------------------------------------------------------------
-  // Three distinct cases, and only two of them are rejections:
+  // --- Dedup (current run only) --------------------------------------------------
+  // Two cases, neither of which is a rejection:
   //
   //  1. Same channel under several keywords in THIS run — merged by channel id in the
-  //     `discovered` map above. Never a rejection: the creator is analysed once and
-  //     exported once, whichever keyword found them first owns the provenance.
+  //     `discovered` map above. The keyword that found them first owns the provenance.
   //  2. Already a candidate earlier in THIS run (a continuation pass re-found them) —
-  //     skipped silently, not rejected and not counted again. The candidate row is
-  //     already queued or analysed.
-  //  3. Already EXPORTED by a previous completed run (Channel.qualifiedAt set), or
-  //     rejected by a previous run inside the cooldown window — these are the only
-  //     real duplicates, and they are what the permanent database exists to stop.
+  //     merged silently; the candidate row is already queued or analysed.
+  //
+  // There is deliberately NO permanent exclusion. A creator qualified or rejected by a
+  // previous run is analysed again: they may have taken on a sponsor since. SQL is
+  // history and cache (unchanged videos reuse their cached analysis for free), not a
+  // blocklist.
   const allIds = Array.from(discovered.keys());
 
-  // The permanent creator database = channels a previous run qualified and exported.
-  // A Channel row on its own is NOT enough: rows are created for every accepted
-  // candidate, including ones this very run created moments ago.
-  const exportedChannels = allIds.length
-    ? await prisma.channel.findMany({
-        where: { youtubeChannelId: { in: allIds }, qualifiedAt: { not: null } },
-        select: { youtubeChannelId: true },
-      })
-    : [];
-  const exportedSet = new Set(exportedChannels.map((c) => c.youtubeChannelId));
-
-  const cooldownRejects = allIds.length
-    ? await prisma.discoveryCandidate.findMany({
-        where: {
-          youtubeChannelId: { in: allIds },
-          discoveryRunId: { not: discoveryRunId },
-          rejectionExpiresAt: { gt: new Date() },
-        },
-        select: { youtubeChannelId: true },
-      })
-    : [];
-  const cooldownSet = new Set(cooldownRejects.map((c) => c.youtubeChannelId));
-
-  // Case 2: candidates this run already created (continuation passes).
   const existingThisRun = allIds.length
     ? await prisma.discoveryCandidate.findMany({
         where: { discoveryRunId, youtubeChannelId: { in: allIds } },
@@ -185,23 +161,15 @@ export async function processDiscoveryRunJob(jobId: string, discoveryRunId: stri
     : [];
   const existingThisRunSet = new Set(existingThisRun.map((c) => c.youtubeChannelId));
 
-  const duplicateFiltered: Array<{ channel: DiscoveredChannel; reason: RejectionReason; detail: string }> = [];
   const toHydrate: DiscoveredChannel[] = [];
 
   for (const channel of discovered.values()) {
     const disposition = classifyDiscovery({
       youtubeChannelId: channel.youtubeChannelId,
       candidateIdsThisRun: existingThisRunSet,
-      exportedChannelIds: exportedSet,
-      cooldownRejectedIds: cooldownSet,
     });
     if (disposition.action === "MERGE") {
-      // Already a candidate in this run (earlier pass): merged, not rejected.
       sameRunDuplicatesMerged += 1;
-      continue;
-    }
-    if (disposition.action === "SKIP") {
-      duplicateFiltered.push({ channel, reason: disposition.reason, detail: disposition.detail });
       continue;
     }
     toHydrate.push(channel);
@@ -252,20 +220,6 @@ export async function processDiscoveryRunJob(jobId: string, discoveryRunId: stri
   let candidatesCreated = 0;
   let candidatesRejected = 0;
   const acceptedCandidateIds: string[] = [];
-
-  for (const { channel, reason, detail } of duplicateFiltered) {
-    await upsertCandidate({
-      discoveryRunId,
-      channel,
-      state: "FILTERED_OUT",
-      rejectionReason: reason,
-      // Duplicate skips carry no cooldown of their own — the original rejection's
-      // cooldown (or the exported creator record) is the authority.
-      rejectionExpiresAt: null,
-      detail,
-    });
-    candidatesRejected += 1;
-  }
 
   for (const channelRef of toHydrate) {
     const resource = hydratedById.get(channelRef.youtubeChannelId);
@@ -343,12 +297,11 @@ export async function processDiscoveryRunJob(jobId: string, discoveryRunId: stri
       candidatesCreated: { increment: candidatesCreated },
       candidatesRejected: { increment: candidatesRejected },
       candidatesAnalysed: { increment: candidatesCreated },
-      duplicatesSkipped: { increment: duplicateFiltered.length },
+      // Both mean the same thing now: repeat appearances collapsed WITHIN this run.
+      // previouslyQualifiedSkipped/cooldownSkipped are no longer written — creators
+      // from previous runs are never skipped.
+      duplicatesSkipped: { increment: sameRunDuplicatesMerged },
       sameRunDuplicatesMerged: { increment: sameRunDuplicatesMerged },
-      previouslyQualifiedSkipped: {
-        increment: duplicateFiltered.filter((d) => d.reason === "DUPLICATE_KNOWN").length,
-      },
-      cooldownSkipped: { increment: duplicateFiltered.filter((d) => d.reason === "DUPLICATE_REJECTED").length },
       quotaUnitsUsed: { increment: quotaUnitsUsed },
       searchCursors: JSON.parse(JSON.stringify({ tokens: nextCursors, exhausted: searchExhausted })),
     },
@@ -368,8 +321,6 @@ export async function processDiscoveryRunJob(jobId: string, discoveryRunId: stri
       candidatesRejected,
       quotaUnitsUsed,
       sameRunDuplicatesMerged,
-      previouslyQualifiedSkipped: duplicateFiltered.filter((d) => d.reason === "DUPLICATE_KNOWN").length,
-      cooldownSkipped: duplicateFiltered.filter((d) => d.reason === "DUPLICATE_REJECTED").length,
     },
   });
 

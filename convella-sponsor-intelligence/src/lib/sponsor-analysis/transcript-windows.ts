@@ -121,3 +121,38 @@ export function extractTranscriptWindows(segments: TranscriptSegmentInput[]): Tr
   // Re-sort chronologically for readability once the priority-based selection is done.
   return bounded.sort((a, b) => a.startSeconds - b.startSeconds);
 }
+
+/**
+ * Trims a window set to a fixed seconds budget for discovery runs, so a long video
+ * never turns into a long (and therefore expensive) transcript payload.
+ *
+ * Priority order matches where sponsor reads actually live: anything inside the
+ * opening `openingSeconds` first (the pre-roll read), then the highest-priority
+ * keyword windows elsewhere. Windows are returned in chronological order.
+ */
+export function capWindowsToBudget(
+  windows: TranscriptWindow[],
+  maxSeconds: number,
+  openingSeconds = 120,
+): TranscriptWindow[] {
+  if (maxSeconds <= 0) return [];
+
+  const ranked = [...windows].sort((a, b) => {
+    const aOpening = a.startSeconds < openingSeconds ? 0 : 1;
+    const bOpening = b.startSeconds < openingSeconds ? 0 : 1;
+    if (aOpening !== bOpening) return aOpening - bOpening;
+    if (a.priority !== b.priority) return b.priority - a.priority;
+    return a.startSeconds - b.startSeconds;
+  });
+
+  const kept: TranscriptWindow[] = [];
+  let spent = 0;
+  for (const window of ranked) {
+    const duration = Math.max(0, window.endSeconds - window.startSeconds);
+    if (spent + duration > maxSeconds) continue;
+    kept.push(window);
+    spent += duration;
+  }
+
+  return kept.sort((a, b) => a.startSeconds - b.startSeconds);
+}

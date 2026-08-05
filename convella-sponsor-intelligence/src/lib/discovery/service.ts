@@ -84,10 +84,15 @@ export function parseSettingsSnapshot(raw: unknown): DiscoverySettingsSnapshot {
     allowHiddenSubscriberCounts: false,
     maxVideoAgeDays: 90,
     rejectionCooldownDays: 30,
+    metadataOnlyDetection: true,
+    transcriptFallbackEnabled: true,
+    maxTranscriptSecondsPerVideo: 120,
+    geminiTextFallbackEnabled: false,
+    nativeVideoAnalysisEnabled: false,
     maxPagesPerQuery: 2,
     minIntervalHours: 20,
     dailyCostLimitUsd: 25,
-    perRunCostLimitUsd: 10,
+    perRunCostLimitUsd: 1,
     dailyQuotaUnits: 8_000,
   };
   if (raw && typeof raw === "object") return { ...defaults, ...(raw as Partial<DiscoverySettingsSnapshot>) };

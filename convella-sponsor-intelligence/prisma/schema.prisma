@@ -568,9 +568,19 @@ model DiscoveryRun {
   sameRunDuplicatesMerged   Int @default(0)
   /// Channels skipped because a PREVIOUS run already qualified and exported them.
   previouslyQualifiedSkipped Int @default(0)
-  /// Channels skipped because a previous run rejected them and the cooldown is
-  /// still active.
+  /// Retired: previous-run creators are no longer skipped, so these stay at 0 on new
+  /// runs. Kept so historical runs still read correctly.
   cooldownSkipped           Int @default(0)
+  /// Videos resolved by free metadata alone (no transcript, no model call).
+  metadataOnlyVideos        Int @default(0)
+  /// Videos that needed the limited transcript window.
+  transcriptFallbackVideos  Int @default(0)
+  /// Videos that needed a paid model call.
+  aiFallbackVideos          Int @default(0)
+  /// Videos no stage could settle within the cost profile — recorded, not retried.
+  unclearVideos             Int @default(0)
+  /// Creators analysed whose newest four eligible videos contained no sponsor.
+  creatorsWithNoSponsor     Int @default(0)
   /// Creators analysed but rejected for having no confirmed sponsor.
   rejectedNoSponsor  Int @default(0)
   /// Qualified creators collected by this run (target: 30).
