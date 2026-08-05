@@ -1,0 +1,834 @@
+// Convella Sponsor Intelligence — Prisma schema
+// All seed/demo data derived from this schema is fictional (see prisma/seed.ts).
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ---------------------------------------------------------------------------
+// Enums
+// ---------------------------------------------------------------------------
+
+enum PlacementType {
+  DEDICATED_VIDEO
+  SPONSORED_INTEGRATION
+  PRODUCT_PLACEMENT
+  AFFILIATE_PROMOTION
+  FREE_PRODUCT_OR_GIFTED
+  ORGANIC_MENTION
+  CHANNEL_PARTNERSHIP
+  UNKNOWN
+}
+
+enum ReviewStatus {
+  PENDING
+  CONFIRMED
+  REJECTED
+  EDITED
+  ORGANIC
+}
+
+enum TranscriptStatus {
+  NOT_REQUESTED
+  PENDING
+  AVAILABLE
+  UNAVAILABLE
+  FAILED
+  MANUAL_UPLOAD_REQUIRED
+}
+
+enum AnalysisStatus {
+  NOT_STARTED
+  QUEUED
+  PROCESSING
+  SPONSOR_FOUND
+  NO_SPONSOR_FOUND
+  FAILED
+  PARTIAL
+  /// No stage of the three-stage pipeline reached the confirmation threshold (or a
+  /// cost limit was hit first) — best-candidate evidence is saved, awaiting a human
+  /// decision rather than being silently dropped or falsely auto-confirmed.
+  HUMAN_REVIEW_REQUIRED
+}
+
+enum AnalysisMode {
+  FIRST_SPONSOR_ONLY
+  ALL_SPONSORS
+}
+
+enum EvidenceSource {
+  VIDEO_AUDIO
+  VIDEO_VISUAL
+  TRANSCRIPT
+  DESCRIPTION
+  YOUTUBE_METADATA
+  MANUAL
+}
+
+enum JobStatus {
+  QUEUED
+  PROCESSING
+  COMPLETED
+  FAILED
+  CANCELLED
+}
+
+enum JobType {
+  CHANNEL_SCAN
+  VIDEO_ANALYSIS
+  DISCOVERY_RUN
+  CREATOR_QUALIFICATION
+}
+
+enum DiscoveryRunStatus {
+  QUEUED
+  RUNNING
+  PAUSED
+  COMPLETED
+  HALTED_COST_LIMIT
+  HALTED_QUOTA_LIMIT
+  CANCELLED
+  FAILED
+}
+
+enum CandidateState {
+  DISCOVERED
+  FILTERED_OUT
+  PENDING_ANALYSIS
+  ANALYSING_NEWEST
+  CHECKING_SIGNALS
+  ANALYSING_SECOND
+  QUALIFIED
+  DEEP_SCANNING
+  QUALIFIED_PARTIAL
+  COMPLETED
+  REJECTED_NOT_COMMERCIAL
+  REJECTED_NO_SPONSOR
+  CANCELLED
+  ERRORED
+}
+
+enum RejectionReason {
+  SUBSCRIBERS_OVER_CAP
+  SUBSCRIBERS_HIDDEN
+  NICHE_MISMATCH
+  INACTIVE
+  NOT_COMMERCIAL
+  NO_SPONSOR
+  DUPLICATE_KNOWN
+  DUPLICATE_REJECTED
+  UNAVAILABLE
+}
+
+// ---------------------------------------------------------------------------
+// Models
+// ---------------------------------------------------------------------------
+
+model Channel {
+  id               String    @id @default(cuid())
+  youtubeChannelId String    @unique
+  handle           String?
+  name             String
+  description      String    @default("")
+  thumbnailUrl     String?
+  subscriberCount  BigInt?
+  totalVideoCount  Int?
+  category         String?
+  notes            String?
+  lastScannedAt    DateTime?
+
+  /// "manual" (operator-added, the historical default) or "discovery" (found by a
+  /// discovery run). Null on rows created before discovery existed = manual.
+  discoverySource  String?
+  discoveredAt     DateTime?
+  /// The YouTube search text that surfaced this channel — provenance, not a verified
+  /// fact about the channel. The creator's real niche is derived from their own
+  /// content in CreatorProfile.primaryNiche/nicheWeights.
+  niche            String?
+  /// "active" | "paused" — reserved hook for the continuous-monitoring roadmap.
+  monitoringStatus String    @default("active")
+
+  // --- Qualified-creator record (the CSV export reads these) ------------------
+  /// Set once the creator passed qualification with >=1 confirmed external paid
+  /// sponsor. Its presence is what makes the creator exportable.
+  qualifiedAt             DateTime?
+  /// Every unique confirmed external paid sponsor found in the analysed window,
+  /// merged across every discovery that reached this creator.
+  confirmedSponsorBrands  String[]  @default([])
+  /// Publish date of the newest ELIGIBLE long-form video (not the sponsor video).
+  latestEligibleVideoAt   DateTime?
+  /// Per-sponsor provenance kept for internal drill-down only — never exported to
+  /// the five-column CSV. `SponsorEvidenceEntry[]`: which video each confirmed
+  /// sponsor was found in (youtubeVideoId, videoUrl, publishedAt).
+  sponsorEvidence         Json?
+
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  videos               Video[]
+  analysisJobs         AnalysisJob[]
+  creatorOpportunities CreatorOpportunity[]
+  discoveryCandidates  DiscoveryCandidate[]
+  profile              CreatorProfile?
+  brandMatches         CreatorBrandMatch[]
+  feedback             CreatorFeedback[]
+  outreach             CreatorOutreach[]
+
+  @@index([handle])
+}
+
+model Video {
+  id                   String    @id @default(cuid())
+  youtubeVideoId       String    @unique
+  channelId            String
+  channel              Channel   @relation(fields: [channelId], references: [id], onDelete: Cascade)
+  title                String
+  description          String    @default("")
+  thumbnailUrl         String?
+  publishedAt          DateTime?
+  durationSeconds      Int?
+  viewCount            BigInt?
+  likeCount            BigInt?
+  tags                 String[]  @default([])
+  paidProductPlacement Boolean   @default(false)
+  /// True for livestream replays/premieres — excluded from sponsorship analysis.
+  isLivestream         Boolean   @default(false)
+
+  transcriptStatus TranscriptStatus @default(NOT_REQUESTED)
+  transcriptSource String?
+  transcriptText   String?
+
+  analysisStatus  AnalysisStatus @default(NOT_STARTED)
+  analysisMode    AnalysisMode   @default(FIRST_SPONSOR_ONLY)
+  secondsAnalysed Int            @default(0)
+  chunksProcessed Int            @default(0)
+  stopReason      String?
+  analysedAt      DateTime?
+
+  /// What was actually analysed on the most recent run (native YouTube video/audio,
+  /// visual frames, transcript, description; model; media source method; last provider
+  /// error, if any) — an `AnalysisInputsUsed` object, powers the "Inputs actually
+  /// analysed" panel. Null until the video has been analysed at least once.
+  lastAnalysisInputs Json?
+
+  /// Which stage of the three-stage cost-optimised pipeline resolved the sponsor
+  /// (1 = free deterministic, 2 = cheap transcript, 3 = native video), or null if
+  /// unresolved / never analysed under the staged pipeline.
+  resolvedAtStage Int?
+  /// Content hashes + pipeline version this video's stage results were computed
+  /// against — a later analysis reuses a stage's cached result instead of re-running
+  /// it when the relevant hash and pipelineVersion still match.
+  descriptionHash String?
+  transcriptHash  String?
+  pipelineVersion Int?
+
+  mediaAuthorised Boolean @default(false)
+  notes           String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  transcriptSegments    TranscriptSegment[]
+  sponsorshipDetections SponsorshipDetection[]
+  analysisJobs          AnalysisJob[]
+  analysisUsages        AnalysisUsage[]
+
+  @@index([channelId])
+  @@index([analysisStatus])
+}
+
+/// Derived, evidence-based performance and content intelligence for one creator.
+/// Every field is COMPUTED from stored videos/detections — nothing here is guessed, and
+/// anything that cannot be computed stays null ("unknown") rather than being invented.
+/// Rebuilt by src/lib/creator-profile/build.ts; `computedAt` records data freshness.
+model CreatorProfile {
+  id        String  @id @default(cuid())
+  channelId String  @unique
+  channel   Channel @relation(fields: [channelId], references: [id], onDelete: Cascade)
+
+  // --- Format split (Shorts are never treated as long-form performance) -------
+  longFormVideoCount Int @default(0)
+  shortsVideoCount   Int @default(0)
+  /// Share of analysed uploads that are Shorts (0–1). High values mean long-form
+  /// sponsorship performance cannot be inferred from headline view counts.
+  shortsRatio        Float?
+
+  // --- Long-form performance (the only basis for sponsorship expectations) ----
+  avgViewsLast10  Float?
+  avgViewsLast25  Float?
+  medianViewsLast25 Float?
+  highestRecentViews Int?
+  lowestRecentViews  Int?
+  /// Median long-form views ÷ subscribers. Very low values suggest inflated or
+  /// disengaged subscriber counts.
+  viewsPerSubscriber Float?
+
+  // --- Engagement -------------------------------------------------------------
+  avgLikes    Float?
+  avgComments Float?
+  /// (likes + comments) ÷ views across long-form uploads.
+  engagementRate Float?
+
+  // --- Cadence and trend ------------------------------------------------------
+  /// Long-form uploads per month over the observed window.
+  uploadsPerMonth Float?
+  daysSinceLastUpload Int?
+  /// Newer-half median views ÷ older-half median views. >1 rising, <1 declining.
+  viewTrendRatio Float?
+  /// 0–1; 1 = perfectly regular upload spacing.
+  uploadConsistency Float?
+
+  // --- Commercial activity ----------------------------------------------------
+  /// Share of analysed long-form videos carrying a counted sponsorship (0–1).
+  sponsorshipFrequency Float?
+  sponsoredVideoCount  Int   @default(0)
+  distinctSponsorCount Int   @default(0)
+  /// Brands that sponsored more than one video — the strongest commercial signal.
+  repeatSponsorCount   Int   @default(0)
+  lastSponsorshipAt    DateTime?
+
+  // --- Contact routes (extracted from public channel/video descriptions) ------
+  businessEmail String?
+  website       String?
+  socialLinks   Json?
+
+  // --- Content intelligence (weighted, never single-category) -----------------
+  primaryNiche    String?
+  secondaryNiche  String?
+  /// [{ category, weight, evidence[] }] — weights sum to ~1.
+  nicheWeights    Json?
+  recurringTopics String[] @default([])
+  /// "beginner" | "intermediate" | "advanced" | null when unknown.
+  technicalDepth  String?
+
+  /// How much of the profile could actually be computed (0–1) — feeds confidence.
+  profileCompleteness Float?
+  videosConsidered    Int   @default(0)
+  computedAt          DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  @@index([channelId])
+}
+
+model TranscriptSegment {
+  id              String   @id @default(cuid())
+  videoId         String
+  video           Video    @relation(fields: [videoId], references: [id], onDelete: Cascade)
+  startSeconds    Float?
+  durationSeconds Float?
+  text            String
+  source          String
+  createdAt       DateTime @default(now())
+
+  @@index([videoId])
+}
+
+model Brand {
+  id            String   @id @default(cuid())
+  canonicalName String   @unique
+  displayName   String
+  domain        String?
+  category      String?
+  aliases       String[] @default([])
+  notes         String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  sponsorshipDetections SponsorshipDetection[]
+  competitorSuggestions BrandCompetitorSuggestion[]
+  creatorOpportunities  CreatorOpportunity[]
+  creatorMatches        CreatorBrandMatch[]
+  feedback              CreatorFeedback[]
+  outreach              CreatorOutreach[]
+
+  @@index([domain])
+}
+
+model SponsorshipDetection {
+  id                    String         @id @default(cuid())
+  videoId               String
+  video                 Video          @relation(fields: [videoId], references: [id], onDelete: Cascade)
+  brandId               String?
+  brand                 Brand?         @relation(fields: [brandId], references: [id])
+  rawBrandName          String
+  placementType         PlacementType  @default(UNKNOWN)
+  startTimestampSeconds Int?
+  endTimestampSeconds   Int?
+  evidenceText          String
+  evidenceSource        EvidenceSource
+  confidenceScore       Float
+  reasoningSummary      String
+  promotionalUrl        String?
+  discountCode          String?
+  callToAction          String?
+  sponsorshipConfirmed  Boolean        @default(false)
+  reviewStatus          ReviewStatus   @default(PENDING)
+  reviewedAt            DateTime?
+  createdAt             DateTime       @default(now())
+  updatedAt             DateTime       @updatedAt
+
+  evidence SponsorEvidence[]
+
+  @@index([videoId])
+  @@index([brandId])
+  @@index([reviewStatus])
+}
+
+model SponsorEvidence {
+  id                     String               @id @default(cuid())
+  sponsorshipDetectionId String
+  detection              SponsorshipDetection @relation(fields: [sponsorshipDetectionId], references: [id], onDelete: Cascade)
+  source                 EvidenceSource
+  timestampSeconds       Int?
+  text                   String
+  strength               Float
+  metadata               Json?
+  createdAt              DateTime             @default(now())
+
+  @@index([sponsorshipDetectionId])
+}
+
+model AnalysisJob {
+  id                String       @id @default(cuid())
+  channelId         String?
+  channel           Channel?     @relation(fields: [channelId], references: [id], onDelete: Cascade)
+  videoId           String?
+  video             Video?       @relation(fields: [videoId], references: [id], onDelete: Cascade)
+  jobType           JobType
+  status            JobStatus    @default(QUEUED)
+
+  /// Set on DISCOVERY_RUN and CREATOR_QUALIFICATION jobs (and on VIDEO_ANALYSIS jobs
+  /// enqueued by a discovery deep scan) so every job is traceable to its run.
+  discoveryRunId       String?
+  discoveryRun         DiscoveryRun?       @relation(fields: [discoveryRunId], references: [id], onDelete: Cascade)
+  discoveryCandidateId String?
+  discoveryCandidate   DiscoveryCandidate? @relation(fields: [discoveryCandidateId], references: [id], onDelete: Cascade)
+  analysisMode      AnalysisMode @default(FIRST_SPONSOR_ONLY)
+  currentChunkStart Int?
+  currentChunkEnd   Int?
+  progress          Float        @default(0)
+  secondsAnalysed   Int          @default(0)
+  chunksProcessed   Int          @default(0)
+  estimatedCost     Float        @default(0)
+  modelUsage        Json?
+  errorMessage      String?
+  attempts          Int          @default(0)
+  startedAt         DateTime?
+  completedAt       DateTime?
+  createdAt         DateTime     @default(now())
+  updatedAt         DateTime     @updatedAt
+
+  @@index([status])
+  @@index([channelId])
+  @@index([videoId])
+  @@index([discoveryRunId])
+  @@index([discoveryCandidateId])
+}
+
+/// Cost/usage record for one run of the three-stage sponsor-analysis pipeline against
+/// one video. Populated regardless of which stage resolved (or failed to resolve) the
+/// sponsor, so cost can be audited and reported even for HUMAN_REVIEW_REQUIRED cases.
+model AnalysisUsage {
+  id            String @id @default(cuid())
+  videoId       String
+  video         Video  @relation(fields: [videoId], references: [id], onDelete: Cascade)
+  analysisJobId String?
+
+  resolvedAtStage Int?
+
+  textModelCalls             Int @default(0)
+  reasoningModelCalls        Int @default(0)
+  videoModelCalls            Int @default(0)
+  inputTokens                Int @default(0)
+  outputTokens               Int @default(0)
+  transcriptCharactersSent   Int @default(0)
+  nativeVideoSecondsAnalysed Int @default(0)
+
+  estimatedTextCost      Decimal @default(0) @db.Decimal(10, 6)
+  estimatedReasoningCost Decimal @default(0) @db.Decimal(10, 6)
+  estimatedVideoCost     Decimal @default(0) @db.Decimal(10, 6)
+  totalEstimatedCost     Decimal @default(0) @db.Decimal(10, 6)
+
+  costLimitReached       Boolean @default(false)
+  skippedExpensiveReason String?
+
+  nativeVideoUsed    Boolean @default(false)
+  nativeAudioUsed    Boolean @default(false)
+  visualAnalysisUsed Boolean @default(false)
+
+  promptCacheReadTokens  Int @default(0)
+  promptCacheWriteTokens Int @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([videoId])
+  @@index([analysisJobId])
+}
+
+model BrandCompetitorSuggestion {
+  id                 String   @id @default(cuid())
+  brandId            String
+  brand              Brand    @relation(fields: [brandId], references: [id], onDelete: Cascade)
+  suggestedBrandName String
+  suggestedDomain    String?
+  reason             String
+  confidenceScore    Float
+  createdAt          DateTime @default(now())
+
+  @@index([brandId])
+}
+
+model CreatorOpportunity {
+  id               String   @id @default(cuid())
+  brandId          String
+  brand            Brand    @relation(fields: [brandId], references: [id], onDelete: Cascade)
+  channelId        String
+  channel          Channel  @relation(fields: [channelId], references: [id], onDelete: Cascade)
+  opportunityScore Int
+  reason           String
+  conflictWarning  String?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@index([brandId])
+  @@index([channelId])
+  @@unique([brandId, channelId])
+}
+
+// ---------------------------------------------------------------------------
+// Automated creator discovery (see docs: discovery specification)
+// ---------------------------------------------------------------------------
+
+/// An operator-configured YouTube search. Executing one page of a query costs 100
+/// YouTube quota units — the single most expensive API operation in the system —
+/// which is why queries carry their own page cap and execution guard fields.
+model DiscoveryQuery {
+  id                  String    @id @default(cuid())
+  label               String
+  queryText           String
+  searchType          String    @default("video") // "video" | "channel"
+  regionCode          String?
+  relevanceLanguage   String?
+  publishedWithinDays Int?
+  /// Retired: the niche filter was removed because it silently dropped relevant
+  /// creators whose title/description did not repeat the keyword. The queryText IS
+  /// the niche. Columns kept so historical rows are readable; nothing writes them.
+  nicheKeywords       String[]  @default([])
+  nicheTopicIds       String[]  @default([])
+  maxPages            Int       @default(1)
+  priority            Int       @default(0)
+  enabled             Boolean   @default(true)
+  lastExecutedAt      DateTime?
+  lastResultCount     Int?
+  notes               String?
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+
+  candidates DiscoveryCandidate[]
+
+  @@index([enabled, priority])
+}
+
+model DiscoveryRun {
+  id              String             @id @default(cuid())
+  status          DiscoveryRunStatus @default(QUEUED)
+  trigger         String             @default("manual") // "manual" | "scheduled"
+  cancelRequested Boolean            @default(false)
+
+  /// Limits/queries frozen at run start — a mid-run settings change must not
+  /// retroactively alter this run's budget, and "what limits applied?" must stay
+  /// answerable months later.
+  settingsSnapshot Json
+
+  // Denormalised rollups for cheap dashboard reads; ground truth stays in
+  // candidates + AnalysisUsage + QuotaLedger.
+  channelsDiscovered Int     @default(0)
+  candidatesCreated  Int     @default(0)
+  candidatesRejected Int     @default(0)
+  creatorsQualified  Int     @default(0)
+  videosAnalysed     Int     @default(0)
+  quotaUnitsUsed     Int     @default(0)
+  totalEstimatedCost Decimal @default(0) @db.Decimal(10, 6)
+
+  // --- Run summary counters (spec: final run summary) ------------------------
+  /// Candidates that reached analysis (excludes duplicates skipped up front).
+  candidatesAnalysed Int @default(0)
+  /// Legacy total of skipped duplicates — kept so historical runs still read
+  /// correctly. New runs also fill the three precise counters below.
+  duplicatesSkipped  Int @default(0)
+  /// Search hits collapsed into an existing candidate because the same channel id
+  /// was already found (another keyword, or an earlier pass of this run). NOT a
+  /// rejection: the creator is analysed once and exported once.
+  sameRunDuplicatesMerged   Int @default(0)
+  /// Channels skipped because a PREVIOUS run already qualified and exported them.
+  previouslyQualifiedSkipped Int @default(0)
+  /// Retired: previous-run creators are no longer skipped, so these stay at 0 on new
+  /// runs. Kept so historical runs still read correctly.
+  cooldownSkipped           Int @default(0)
+  /// Videos resolved by free metadata alone (no transcript, no model call).
+  metadataOnlyVideos        Int @default(0)
+  /// Videos that needed the limited transcript window.
+  transcriptFallbackVideos  Int @default(0)
+  /// Videos that needed a paid model call.
+  aiFallbackVideos          Int @default(0)
+  /// Videos no stage could settle within the cost profile — recorded, not retried.
+  unclearVideos             Int @default(0)
+  /// Creators analysed whose newest four eligible videos contained no sponsor.
+  creatorsWithNoSponsor     Int @default(0)
+  /// Creators analysed but rejected for having no confirmed sponsor.
+  rejectedNoSponsor  Int @default(0)
+  /// Qualified creators collected by this run (target: 30).
+  qualifiedCount     Int @default(0)
+  /// Why the run stopped, shown verbatim in the summary.
+  stopReason         String?
+  /// Per-query nextPageToken cursors so continuation searches resume rather than
+  /// re-paying for page one.
+  searchCursors      Json?
+
+  errorMessage String?
+  startedAt    DateTime?
+  completedAt  DateTime?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  candidates   DiscoveryCandidate[]
+  analysisJobs AnalysisJob[]
+
+  @@index([status])
+  @@index([createdAt])
+}
+
+/// One channel surfaced by one run, tracked through the qualification state machine.
+/// Rejected candidates deliberately have no Channel row (nothing to monitor); the
+/// youtubeChannelId is kept so cooldown-based duplicate rejection works without one.
+model DiscoveryCandidate {
+  id               String          @id @default(cuid())
+  discoveryRunId   String
+  run              DiscoveryRun    @relation(fields: [discoveryRunId], references: [id], onDelete: Cascade)
+  discoveryQueryId String?
+  query            DiscoveryQuery? @relation(fields: [discoveryQueryId], references: [id], onDelete: SetNull)
+
+  youtubeChannelId String
+  channelTitle     String?
+  channelId        String?
+  channel          Channel? @relation(fields: [channelId], references: [id], onDelete: SetNull)
+
+  state              CandidateState   @default(DISCOVERED)
+  rejectionReason    RejectionReason?
+  /// Until this instant, later runs skip this channel as DUPLICATE_REJECTED; after
+  /// it, the channel may be re-discovered (channels grow and change niche).
+  rejectionExpiresAt DateTime?
+  /// A gating video ended HUMAN_REVIEW_REQUIRED — not qualified, but a near-miss a
+  /// human should look at rather than have silently discarded.
+  borderline         Boolean          @default(false)
+
+  /// Retired alongside the niche filter — historical rows only, never written now.
+  nicheDecision              Json?
+  promotionalSignals         Json?
+  subscriberCountAtDiscovery BigInt?
+
+  /// Deep-scan resume cursor: the chosen videos (ordered, newest first) and the next
+  /// index to analyse. Crash/halt recovery continues from exactly here.
+  deepScanVideoIds String[] @default([])
+  deepScanCursor   Int      @default(0)
+  /// Unique confirmed external paid sponsors found so far (max 2).
+  uniqueSponsors   String[] @default([])
+  /// `SponsorEvidenceEntry[]` — per-sponsor video provenance accumulated during
+  /// analysis so a resumed job keeps it. Copied onto the Channel on qualification.
+  sponsorEvidence  Json?
+  /// True when this channel was ALREADY known (in the database, or rejected by an
+  /// earlier run) at the moment this candidate was created. Surfaced as the CSV's
+  /// "Duplicate" column so previously-seen creators can be included in a run and
+  /// filtered by hand rather than silently dropped.
+  /// Retired: superseded by proper intra-run merging (same channel under several
+  /// keywords is one creator, not a duplicate). Historical rows only.
+  previouslySeen   Boolean  @default(false)
+  /// How many paid gating analyses have been attempted (resume cursor into the free
+  /// gate's ranked paidOrder), so a halt/crash mid-gating never re-pays for a video.
+  gatingCursor     Int      @default(0)
+
+  estimatedCost Decimal @default(0) @db.Decimal(10, 6)
+  errorMessage  String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  analysisJobs AnalysisJob[]
+
+  @@unique([discoveryRunId, youtubeChannelId])
+  @@index([state])
+  @@index([youtubeChannelId, state])
+  @@index([discoveryQueryId])
+}
+
+/// Operator-editable runtime settings. Values are Json validated by per-key Zod
+/// schemas at read time (a malformed row falls back to the env/default, never
+/// crashes the worker). Never store secrets here — this table is operator-visible.
+enum MatchRecommendation {
+  STRONG_MATCH
+  GOOD_MATCH
+  NEEDS_MORE_RESEARCH
+  WEAK_MATCH
+  REJECT
+}
+
+enum CreatorDecision {
+  APPROVE
+  REJECT
+  NEEDS_MORE_RESEARCH
+  CONTACT_LATER
+  NOT_RELEVANT
+  TOO_EXPENSIVE
+  WEAK_VIEWS
+  WRONG_AUDIENCE
+  ALREADY_CONTACTED
+  DUPLICATE
+  GOOD_FIT
+}
+
+enum OutreachStatus {
+  NOT_CONTACTED
+  CONTACTED
+  REPLIED
+  IN_DISCUSSION
+  NEGOTIATING
+  WON
+  LOST
+  DECLINED
+}
+
+/// A scored creator↔brand pairing. Both scores are stored: `matchScore` is how
+/// suitable the creator is, `confidenceScore` is how far the evidence can be trusted.
+/// Components and signals are persisted so any recommendation can be defended months
+/// later with the exact numbers that produced it.
+model CreatorBrandMatch {
+  id        String  @id @default(cuid())
+  channelId String
+  channel   Channel @relation(fields: [channelId], references: [id], onDelete: Cascade)
+  brandId   String
+  brand     Brand   @relation(fields: [brandId], references: [id], onDelete: Cascade)
+
+  matchScore      Int
+  confidenceScore Int
+  recommendation  MatchRecommendation
+
+  /// ScoreComponent[] — per-dimension points, max, reason and unknown flag.
+  components Json
+  /// MatchSignal[] — positive / negative / unknown, kept separate by kind.
+  signals    Json
+  explanation String
+
+  /// Weights this result was computed under, so a re-weighting is auditable.
+  weightsUsed Json
+  /// Operator override; when set, this wins over matchScore in the UI and exports.
+  manualScore Int?
+  manualNote  String?
+
+  scoredAt  DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  decisions CreatorFeedback[]
+
+  @@unique([channelId, brandId])
+  @@index([brandId, matchScore])
+  @@index([recommendation])
+}
+
+/// A human decision about a creator (optionally for a specific brand), captured with
+/// the scores and evidence AS THEY WERE at decision time. This is the training signal
+/// for measuring and improving accuracy — never overwritten, always appended.
+model CreatorFeedback {
+  id        String  @id @default(cuid())
+  channelId String
+  channel   Channel @relation(fields: [channelId], references: [id], onDelete: Cascade)
+  brandId   String?
+  brand     Brand?  @relation(fields: [brandId], references: [id], onDelete: SetNull)
+  matchId   String?
+  match     CreatorBrandMatch? @relation(fields: [matchId], references: [id], onDelete: SetNull)
+
+  decision CreatorDecision
+  reason   String?
+  /// The operator's own 0–100 assessment, for human-vs-system comparison.
+  humanScore Int?
+
+  // Snapshot at decision time — the system's own scores must not be retro-edited.
+  matchScoreAtDecision      Int?
+  confidenceScoreAtDecision Int?
+  signalsAtDecision         Json?
+
+  decidedBy String?
+  createdAt DateTime @default(now())
+
+  @@index([channelId])
+  @@index([brandId])
+  @@index([decision, createdAt])
+}
+
+/// Outreach pipeline state for a creator↔brand pairing — turns intelligence into a
+/// workflow (contacted → replied → quoted → won/lost).
+model CreatorOutreach {
+  id        String  @id @default(cuid())
+  channelId String
+  channel   Channel @relation(fields: [channelId], references: [id], onDelete: Cascade)
+  brandId   String
+  brand     Brand   @relation(fields: [brandId], references: [id], onDelete: Cascade)
+
+  status        OutreachStatus @default(NOT_CONTACTED)
+  contactedAt   DateTime?
+  repliedAt     DateTime?
+  nextFollowUpAt DateTime?
+  quotedRateUsd Decimal?       @db.Decimal(10, 2)
+  agreedRateUsd Decimal?       @db.Decimal(10, 2)
+  owner         String?
+  notes         String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([channelId, brandId])
+  @@index([status])
+}
+
+model AppSetting {
+  key       String   @id
+  value     Json
+  updatedBy String?
+  updatedAt DateTime @updatedAt
+}
+
+/// Reserve-then-commit ledger for YouTube API quota units. A reservation is written
+/// (transactionally, against the day's budget) BEFORE the API call is issued;
+/// afterwards it is committed or released. reservationKey makes replays no-ops.
+model QuotaLedger {
+  id             String   @id @default(cuid())
+  date           String // UTC day bucket, "2026-08-02"
+  purpose        String // "search" | "hydration"
+  jobId          String?
+  reservationKey String   @unique
+  unitsReserved  Int
+  unitsCommitted Int      @default(0)
+  released       Boolean  @default(false)
+  createdAt      DateTime @default(now())
+
+  @@index([date])
+}
+
+model AuditLog {
+  id         String   @id @default(cuid())
+  actorType  String // "user" | "system" | "worker"
+  actorId    String?
+  action     String // e.g. "discovery.run.started", "discovery.candidate.rejected"
+  entityType String
+  entityId   String
+  detail     Json?
+  createdAt  DateTime @default(now())
+
+  @@index([entityType, entityId])
+  @@index([action, createdAt])
+  @@index([createdAt])
+}

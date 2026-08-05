@@ -1,0 +1,2 @@
+-- AlterEnum
+ALTER TYPE "AnalysisStatus" ADD VALUE 'HUMAN_REVIEW_REQUIRED';

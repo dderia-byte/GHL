@@ -1,0 +1,36 @@
+/** Deterministic phrase list used to spot commercial/sponsorship language before calling any AI model. */
+export const SPONSOR_DISCLOSURE_PHRASES = [
+  "sponsored by",
+  "sponsor of today's video",
+  "sponsor of this video",
+  "today's sponsor",
+  "thanks to",
+  "thank you to",
+  "brought to you by",
+  "partnered with",
+  "in partnership with",
+  "paid partnership",
+  "paid promotion",
+  "affiliate link",
+  "affiliate",
+  "discount code",
+  "use code",
+  "link below",
+  "links below",
+  "free trial",
+  "special offer",
+  "referral",
+  "supporting the channel",
+] as const;
+
+export const BRAND_INTRODUCING_PHRASES = [
+  "sponsored by",
+  "brought to you by",
+  "thanks to",
+  "thank you to",
+  "partnered with",
+  "in partnership with",
+  "paid partnership with",
+  "today's sponsor is",
+  "today's sponsor,",
+] as const;
